@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
-import type { NoteCardData } from "@/data/mock";
+import type { NoteCardData } from "@/data/cards";
 import { AnalogDecor } from "@/components/AnalogDecor";
 import { StampControls } from "@/components/StampControls";
 

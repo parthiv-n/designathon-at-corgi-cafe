@@ -1,55 +1,74 @@
-import { MOCK_CARDS, MOCK_CAPTION } from "@/data/mock";
+"use client";
+
+import { useEffect, useState } from "react";
 import { NoteCard } from "@/components/NoteCard";
 import { PhotoCard } from "@/components/PhotoCard";
 import { TypewriterText } from "@/components/TypewriterText";
+import { buildCards } from "@/lib/layout";
+import type { CanvasState } from "@/lib/vibeBoard";
 
 export function ScrapbookCanvas({
-  revealed,
-  generation,
-  prompt,
+  canvasState,
   done,
 }: {
-  revealed: boolean;
-  generation: number;
-  prompt: string;
+  canvasState: CanvasState;
   done: boolean;
 }) {
-  const caption = prompt
-    ? `${prompt.toLowerCase()} — tiles, sardines, and a first scatter of scraps.`
-    : MOCK_CAPTION;
+  // Matches the breakpoint globals.css uses for the rest of the page. Starts
+  // false so the server and the first client render agree; the board is empty
+  // until a scrape lands, so there is nothing to re-lay-out before this settles.
+  const [compact, setCompact] = useState(false);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 720px)");
+    const sync = () => setCompact(query.matches);
+
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  const cards = buildCards(canvasState, compact);
+  const caption = canvasState.vibeSummary.toLowerCase();
+
+  // A new post re-keys every card so the whole page re-pins; within one post,
+  // card ids carry their content, so only what actually changed remounts.
+  const generation = canvasState.originalImage ?? "empty";
 
   return (
     <section className="scrap-canvas" aria-label="Scrapbook canvas">
-      {revealed ? (
-        <p key={`caption-${generation}`} className="page-title">
+      {caption ? (
+        <p key={`caption-${caption}`} className="page-title">
           <TypewriterText text={caption} active />
         </p>
       ) : null}
 
-      {revealed
-        ? MOCK_CARDS.map((card, index) =>
-            card.kind === "photo" ? (
-              <PhotoCard
-                key={`${generation}-${card.id}`}
-                card={card}
-                index={index}
-                locked={done}
-              />
-            ) : (
-              <NoteCard
-                key={`${generation}-${card.id}`}
-                card={card}
-                index={index}
-                locked={done}
-              />
-            ),
-          )
-        : null}
+      {cards.map((card, index) =>
+        card.kind === "photo" ? (
+          <PhotoCard
+            key={`${generation}-${card.id}`}
+            card={card}
+            index={index}
+            locked={done}
+          />
+        ) : (
+          <NoteCard
+            key={`${generation}-${card.id}`}
+            card={card}
+            index={index}
+            locked={done}
+          />
+        ),
+      )}
 
       {done ? (
         <div className="saved-stamp" aria-live="polite">
           <span>saved</span>
-          <em>6 sep</em>
+          <em>
+            {new Date()
+              .toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+              .toLowerCase()}
+          </em>
         </div>
       ) : null}
     </section>

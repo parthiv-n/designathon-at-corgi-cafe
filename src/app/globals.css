@@ -88,15 +88,16 @@ body {
   inset: 0;
 }
 
-/* --- Palette strip -------------------------------------------------- */
+/* --- Photo bank ----------------------------------------------------- */
 
-.palette-strip {
+.photo-bank {
   position: absolute;
   left: 28px;
   top: 46%;
   z-index: 40;
   display: flex;
-  width: 72px;
+  width: 92px;
+  max-height: 78vh;
   translate: 0 -50%;
   flex-direction: column;
   align-items: center;
@@ -105,7 +106,7 @@ body {
   box-shadow: none;
 }
 
-.palette-pin {
+.photo-bank-pin {
   position: absolute;
   top: 8px;
   left: 50%;
@@ -116,18 +117,22 @@ body {
   background: #6b8f71;
 }
 
-.palette-chips {
+.photo-bank-chips {
   display: flex;
   width: 100%;
   flex-direction: column;
   gap: 7px;
   margin: 0;
-  padding: 10px 0 0;
+  padding: 10px 2px 0;
   list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
-.palette-chip {
+.photo-bank-chip {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   overflow: hidden;
   background: #f4eee2;
@@ -135,27 +140,70 @@ body {
   animation: chip-pin 620ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
 }
 
-.palette-chip:nth-child(odd) {
+/* The strip reads as pinned paper, not a grid: chips sit slightly off-axis. */
+.photo-bank-chip:nth-child(odd) {
   margin-right: 4px;
 }
 
-.palette-chip:nth-child(even) {
+.photo-bank-chip:nth-child(even) {
   margin-left: 4px;
 }
 
-.palette-swatch {
+.photo-bank-button {
+  position: relative;
   display: block;
-  height: 38px;
+  width: 100%;
+  padding: 3px 3px 8px;
+  border: 0;
+  background: none;
+  cursor: pointer;
 }
 
-.palette-hex {
+.photo-bank-button img {
   display: block;
-  padding: 4px 3px 5px;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  object-fit: cover;
+  transition: filter 180ms ease;
+}
+
+.photo-bank-button:hover img {
+  filter: saturate(1.12) brightness(1.04);
+}
+
+.photo-bank-button:focus-visible {
+  outline: 2px dashed var(--color-azulejo);
+  outline-offset: 2px;
+}
+
+.photo-bank-chip.is-pinned .photo-bank-button img {
+  filter: saturate(0.55) brightness(1.08);
+}
+
+.photo-bank-tick {
+  position: absolute;
+  right: 6px;
+  bottom: 10px;
   font-family: var(--font-type);
-  font-size: 8px;
-  letter-spacing: 0.02em;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--color-vinho);
+}
+
+/* Before anything is scraped: empty slips waiting for a link. */
+.photo-bank-chip.is-blank {
+  height: 52px;
+  background: rgb(244 238 226 / 0.42);
+  box-shadow: none;
+}
+
+.photo-bank-hint {
+  margin: 10px 0 0;
+  font-family: var(--font-hand);
+  font-size: 13px;
+  line-height: 1.15;
   text-align: center;
-  color: var(--color-ink);
+  color: rgb(42 36 32 / 0.52);
 }
 
 /* --- Title written on the page -------------------------------------- */
@@ -559,6 +607,48 @@ body {
   transform: scale(1.08);
 }
 
+/* Sticky slip taped to the bottom of a photo, naming the place on it. */
+.scrap-label {
+  position: absolute;
+  left: 6%;
+  bottom: -6%;
+  z-index: 3;
+  display: flex;
+  max-width: 104%;
+  flex-direction: column;
+  padding: 4px 9px 5px;
+  background: #fdf6b8;
+  color: var(--color-ink);
+  rotate: -1.6deg;
+  pointer-events: none;
+  filter: drop-shadow(2px 3px 0 rgb(110 58 22 / 0.28));
+}
+
+.scrap-pin:nth-child(even) .scrap-label {
+  rotate: 2.2deg;
+}
+
+.scrap-label-title {
+  font-family: var(--font-hand);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.scrap-label-sub {
+  margin-top: 1px;
+  font-family: var(--font-type);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: rgb(42 36 32 / 0.62);
+}
+
+.scrap-pin.is-kept .scrap-label {
+  filter: drop-shadow(1px 1px 0 rgb(92 52 24 / 0.2));
+}
+
 .kept-stamp {
   position: absolute;
   top: 38%;
@@ -640,6 +730,26 @@ body {
   align-items: center;
   translate: -50% 0;
   animation: slip-drop 700ms 180ms cubic-bezier(0.18, 0.7, 0.22, 1) both;
+}
+
+/* What the director says back, written in the margin above the bar. */
+.director-slip {
+  min-height: 22px;
+  margin-bottom: 6px;
+  padding: 0 12px;
+  font-family: var(--font-hand);
+  font-size: 19px;
+  line-height: 1.2;
+  text-align: center;
+  color: rgb(42 36 32 / 0.7);
+}
+
+.director-slip p {
+  margin: 0;
+}
+
+.director-error {
+  color: var(--color-vinho);
 }
 
 .prompt-bar {
@@ -786,36 +896,50 @@ body {
     inset: 92px 20px 108px;
   }
 
-  .palette-strip {
+  .photo-bank {
     top: 14px;
     left: 50%;
-    width: auto;
+    width: min(calc(100vw - 32px), 520px);
+    max-height: none;
     translate: -50% 0;
     flex-direction: row;
     padding: 10px 14px 8px;
   }
 
-  .palette-pin {
+  .photo-bank-pin {
     display: none;
   }
 
-  .palette-chips {
+  .photo-bank-chips {
     flex-direction: row;
     gap: 6px;
     padding: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
-  .palette-chip {
+  .photo-bank-chip {
     width: 48px;
   }
 
-  .palette-chip:nth-child(odd),
-  .palette-chip:nth-child(even) {
+  .photo-bank-chip:nth-child(odd),
+  .photo-bank-chip:nth-child(even) {
     margin: 0;
   }
 
-  .palette-swatch {
-    height: 22px;
+  .photo-bank-chip.is-blank {
+    height: 60px;
+  }
+
+  .photo-bank-empty {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .photo-bank-hint {
+    margin: 0;
+    white-space: nowrap;
   }
 
   .page-title {
@@ -839,7 +963,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .scrap-pin,
-  .palette-chip,
+  .photo-bank-chip,
   .page-title,
   .prompt-dock,
   .saved-stamp,

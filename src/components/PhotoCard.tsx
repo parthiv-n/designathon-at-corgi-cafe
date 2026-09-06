@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import type { PhotoCardData } from "@/data/mock";
+import type { PhotoCardData } from "@/data/cards";
 import { AnalogDecor } from "@/components/AnalogDecor";
 import { StampControls } from "@/components/StampControls";
+import { unsplashUrlFor } from "@/lib/vibeBoard";
 
 function nextRotation() {
   return -8 + Math.random() * 18;
@@ -25,6 +26,7 @@ export function PhotoCard({
   const [variant, setVariant] = useState(0);
   const [rotate, setRotate] = useState(card.rotate);
   const [cut, setCut] = useState(card.cut);
+  const [failed, setFailed] = useState(false);
 
   const pool = [
     { src: card.src, alt: card.alt, location: card.location },
@@ -54,6 +56,8 @@ export function PhotoCard({
       setVariant((value) => value + 1);
       setRotate(nextRotation());
       setCut((value) => (value % 8) + 1);
+      // The next photo deserves its own chance to load.
+      setFailed(false);
       setLeaving(false);
     }, 420);
   }
@@ -89,10 +93,14 @@ export function PhotoCard({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             key={current.src}
-            src={current.src}
+            src={failed ? unsplashUrlFor(card.id) : current.src}
             alt=""
             width={card.width}
             height={Math.round(card.width * 1.28)}
+            // Instagram CDN URLs are signed and sometimes 403 from the browser.
+            // A stand-in photo keeps the page whole rather than tearing a hole
+            // in it mid-demo.
+            onError={() => setFailed(true)}
           />
         </span>
         <span className={`photo-face photo-back cut-${cut}`}>
@@ -100,6 +108,14 @@ export function PhotoCard({
           <span className="photo-back-caption">{current.location}</span>
         </span>
       </button>
+      {card.label ? (
+        <span className="scrap-label">
+          <span className="scrap-label-title">{card.label}</span>
+          {card.sublabel ? (
+            <span className="scrap-label-sub">{card.sublabel}</span>
+          ) : null}
+        </span>
+      ) : null}
       {accepted ? <span className="kept-stamp">kept</span> : null}
       <AnalogDecor items={card.decors} />
       {locked ? null : (

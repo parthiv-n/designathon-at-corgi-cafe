@@ -1,5 +1,5 @@
 /* eslint-disable @next/next/no-img-element */
-import type { DecorAsset } from "@/data/mock";
+import type { DecorAsset } from "@/data/cards";
 
 export function AnalogDecor({ items }: { items: DecorAsset[] }) {
   if (!items.length) return null;
