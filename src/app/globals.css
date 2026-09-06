@@ -54,7 +54,7 @@ body {
 
 .paper-stage {
   position: absolute;
-  inset: 52px 72px 128px 148px;
+  inset: 52px 72px 100px 148px;
   z-index: 1;
 }
 
@@ -102,9 +102,7 @@ body {
   align-items: center;
   padding: 18px 8px 12px;
   background: #d8c4a4;
-  box-shadow:
-    0 10px 22px rgba(42, 36, 32, 0.18),
-    inset 0 1px 0 rgba(255, 247, 232, 0.45);
+  box-shadow: none;
 }
 
 .palette-pin {
@@ -633,7 +631,7 @@ body {
 
 .prompt-dock {
   position: absolute;
-  bottom: 16px;
+  bottom: 32px;
   left: 50%;
   z-index: 50;
   display: flex;
@@ -653,7 +651,7 @@ body {
   border: 0;
   background: #f4eee2;
   border-radius: 999px;
-  box-shadow: 0 8px 20px rgba(42, 36, 32, 0.12);
+  box-shadow: none;
 }
 
 .prompt-input {
@@ -828,7 +826,7 @@ body {
   }
 
   .prompt-dock {
-    bottom: 16px;
+    bottom: 24px;
   }
 }
 
