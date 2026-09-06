@@ -21,12 +21,24 @@ export const activitySchema = z.object({
     ),
 });
 
+/** Who took a photo, and where to link them. Required by Unsplash's guidelines. */
+export interface PhotoCredit {
+  name: string;
+  /** The photographer's Unsplash profile, un-tagged. Run it through `withUnsplashUtm`. */
+  profileUrl: string;
+}
+
 export type Activity = z.infer<typeof activitySchema> & {
   /**
-   * A real photo of this place, filled in server-side by the Commons lookup in
+   * A real photo of this place, filled in server-side by the lookup chain in
    * ./placePhotos. Not part of the schema -- the model never writes it.
    */
   resolvedImage?: string;
+  /**
+   * Set only when `resolvedImage` came from Unsplash search; Commons photos and
+   * the curated fallbacks carry no photographer we can name.
+   */
+  resolvedCredit?: PhotoCredit;
 };
 
 /**
@@ -255,10 +267,38 @@ export function applyCanvasPatch(
 }
 
 /**
+ * Must match the application name registered at
+ * unsplash.com/oauth/applications -- Unsplash reconciles referral traffic
+ * against it, so a mismatch means the photographer is not credited for it.
+ */
+export const UNSPLASH_APP_NAME = 'designathon_at_corgi_cafe';
+
+/**
+ * Every link back to Unsplash has to carry these. Guideline, not decoration:
+ * it is how a photographer sees that their work sent someone their way.
+ */
+export function withUnsplashUtm(url: string): string {
+  try {
+    const tagged = new URL(url);
+    tagged.searchParams.set('utm_source', UNSPLASH_APP_NAME);
+    tagged.searchParams.set('utm_medium', 'referral');
+    return tagged.toString();
+  } catch {
+    // Not an absolute URL. Nothing useful to tag, and a credit line that
+    // renders is better than one that throws.
+    return url;
+  }
+}
+
+export const UNSPLASH_HOME_URL = withUnsplashUtm('https://unsplash.com/');
+
+/**
+ * Last resort, below Unsplash search and Commons in ./placePhotos.
+ *
  * Unsplash retired source.unsplash.com, so keyword URLs no longer resolve.
- * This maps a keyword onto a stable photo from a curated moody-travel set:
- * the image will not always match the keyword, but it always loads, which
- * matters more on stage. Swap in the real Unsplash Search API if you wire a key.
+ * This maps a keyword onto a stable photo from a curated moody-travel set: the
+ * image will not match the keyword, but it always loads, which is the only job
+ * it has once both searches have come up empty.
  */
 const UNSPLASH_FALLBACKS = [
   'photo-1502920917128-1aa500764cbd',
@@ -282,7 +322,9 @@ export function unsplashUrlFor(keyword: string, width = 1200): string {
 
 /** Handy for a "see more" link, since the keyword is a search term. */
 export function unsplashSearchUrl(keyword: string): string {
-  return `https://unsplash.com/s/photos/${encodeURIComponent(keyword)}`;
+  return withUnsplashUtm(
+    `https://unsplash.com/s/photos/${encodeURIComponent(keyword)}`,
+  );
 }
 
 /**

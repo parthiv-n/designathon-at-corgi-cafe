@@ -1,19 +1,28 @@
+import { searchUnsplashPhoto } from './unsplash';
+import type { PhotoCredit } from './vibeBoard';
 import { unsplashUrlFor } from './vibeBoard';
 
 /**
- * Finds a real photo of a real place.
+ * Finds a real photo of a real place. Three sources, first hit wins.
  *
- * Unsplash retired its keyword endpoint and its Search API needs a key this
- * project does not have, which is why every card used to fall back to the same
- * eight moody stock photos -- a Tokyo alley standing in for a brewery in the
- * Finger Lakes. Wikimedia Commons needs no key and, because the director is
- * told to name actual places, its search is a good match: query "Watkins Glen
- * State Park" and you get Watkins Glen State Park.
+ * 1. Unsplash search. The director is told to name actual places, and Unsplash
+ *    is strong on them -- "Omoide Yokocho" returns the red lanterns in that
+ *    Shinjuku alley. It also looks the part, which matters on a page whose
+ *    whole subject is a vibe.
+ * 2. Wikimedia Commons. No key, and better than Unsplash on the long tail of
+ *    named landmarks: obscure state parks, small museums, minor monuments.
+ * 3. The curated set in `unsplashUrlFor`. Unrelated to the place, but it always
+ *    loads, which is the only thing that matters once the searches are spent.
  *
- * Coverage is the trade-off. Landmarks, parks and neighbourhoods resolve well;
- * a three-month-old natural wine bar will not, and those fall back to the
- * curated set, which is why `unsplashUrlFor` is still here.
+ * Tier 3 used to be tier 1, which is how a Tokyo alley ended up standing in for
+ * a brewery in the Finger Lakes.
  */
+
+/** A photo plus, when Unsplash found it, the photographer we owe a credit. */
+export interface ResolvedPhoto {
+  src: string;
+  credit?: PhotoCredit;
+}
 
 const COMMONS_ENDPOINT = 'https://commons.wikimedia.org/w/api.php';
 
@@ -28,7 +37,7 @@ const THUMB_WIDTH = 900;
  * produces a few dozen, and the process is a dev server or a serverless worker
  * that gets recycled long before this matters.
  */
-const cache = new Map<string, string | null>();
+const cache = new Map<string, ResolvedPhoto | null>();
 
 /** Commons is full of maps, plaques and logos; none of them read as a photo. */
 const REJECTED_TITLE = /\b(map|logo|seal|coat of arms|diagram|plaque|sign|chart|flag)\b/i;
@@ -95,25 +104,48 @@ async function searchCommons(query: string): Promise<string | null> {
 export async function resolvePlaceImage(
   query: string,
   fallbackKey: string,
-): Promise<string> {
+): Promise<ResolvedPhoto> {
   const key = query.trim().toLowerCase();
-  const fallback = unsplashUrlFor(fallbackKey);
+  const fallback: ResolvedPhoto = { src: unsplashUrlFor(fallbackKey) };
 
   if (!key) return fallback;
 
-  if (cache.has(key)) {
-    return cache.get(key) ?? fallback;
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached ?? fallback;
+
+  // Each source gets its own try. One in a shared block would mean an Unsplash
+  // timeout skipped Commons entirely, which is the opposite of a fallback.
+  let failed = false;
+
+  try {
+    const found = await searchUnsplashPhoto(key);
+    if (found) {
+      const photo: ResolvedPhoto = { src: found.src, credit: found.credit };
+      cache.set(key, photo);
+      return photo;
+    }
+  } catch (error) {
+    failed = true;
+    console.warn('[placePhotos] Unsplash lookup failed for', key, error);
   }
 
   try {
     const found = await searchCommons(key);
-    cache.set(key, found);
-    return found ?? fallback;
+    if (found) {
+      const photo: ResolvedPhoto = { src: found };
+      cache.set(key, photo);
+      return photo;
+    }
   } catch (error) {
-    console.warn('[placePhotos] lookup failed for', key, error);
-    // Not cached: a timeout now says nothing about the next attempt.
-    return fallback;
+    failed = true;
+    console.warn('[placePhotos] Commons lookup failed for', key, error);
   }
+
+  // Only cache a genuine "nobody has a photo of this". A timeout or a spent
+  // rate limit says nothing about the next attempt.
+  if (!failed) cache.set(key, null);
+
+  return fallback;
 }
 
 /**
@@ -123,11 +155,18 @@ export async function resolvePlaceImage(
  */
 export async function withPlacePhotos<
   T extends { title: string; imageUrl: string },
->(activities: T[]): Promise<(T & { resolvedImage?: string })[]> {
+>(
+  activities: T[],
+): Promise<(T & { resolvedImage?: string; resolvedCredit?: PhotoCredit })[]> {
   return Promise.all(
-    activities.map(async activity => ({
-      ...activity,
-      resolvedImage: await resolvePlaceImage(activity.title, activity.imageUrl),
-    })),
+    activities.map(async activity => {
+      const photo = await resolvePlaceImage(activity.title, activity.imageUrl);
+
+      return {
+        ...activity,
+        resolvedImage: photo.src,
+        resolvedCredit: photo.credit,
+      };
+    }),
   );
 }

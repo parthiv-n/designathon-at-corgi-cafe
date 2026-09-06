@@ -1,11 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { PhotoBank } from "@/components/PhotoBank";
 import { PromptBar } from "@/components/PromptBar";
+import { ResizeHandle } from "@/components/ResizeHandle";
 import { ScrapbookCanvas } from "@/components/ScrapbookCanvas";
-import { TypewriterText } from "@/components/TypewriterText";
+import { SidePanel } from "@/components/SidePanel";
+import { UnsplashCredits } from "@/components/UnsplashCredits";
+import { useBoardDrag } from "@/hooks/useBoardDrag";
 import { useCanvasController } from "@/hooks/useCanvasController";
+import { useResize } from "@/hooks/useResize";
 import { EMPTY_CANVAS, looksLikeInstagramUrl } from "@/lib/vibeBoard";
 
 export function Scrapbook() {
@@ -13,62 +16,105 @@ export function Scrapbook() {
   // state, so calling it anywhere else would fork the board.
   const canvas = useCanvasController(EMPTY_CANVAS);
   const [done, setDone] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+  // The board stays masked to the paper until the drop animation has finished;
+  // after that scraps can be dragged past the torn edge.
+  const [loose, setLoose] = useState(false);
+
+  // The bulldog clip is furniture, not content: it drags and resizes but holds
+  // no state anyone needs back.
+  const clip = useBoardDrag({ x: 77, y: -11 }, "paper-stage", "chrome");
+  const clipSize = useResize(128, 64, 220);
 
   const { canvasState } = canvas;
-  const hasBoard = canvasState.activities.length > 0 || !!canvasState.originalImage;
+  const revealed =
+    canvasState.activities.length > 0 || !!canvasState.originalImage;
 
   /**
-   * One bar, two features. An Instagram link is a new page to build; anything
-   * else is a note to the director about the page already on the table.
+   * One entry point, two features. An Instagram link is a new page to build;
+   * anything else is a note to the director about the page already on the
+   * table. The intro prompt bar and the panel's chat field both land here.
    */
   function handleSubmit(value: string) {
+    setPanelOpen(true);
+    setLoose(false);
+
     if (looksLikeInstagramUrl(value)) {
-      void canvas.runInstagram(value);
+      void canvas.runInstagram(value).then(() => setLoose(true));
     } else {
-      void canvas.sendMessage(value);
+      void canvas.sendMessage(value).then(() => setLoose(true));
     }
   }
 
-  // The model's own words, which land before the typed patch does.
-  const lastNode = canvas.nodes[canvas.nodes.length - 1] ?? null;
-
   return (
-    <div className={`scrapbook-page${done ? " is-done" : ""}`}>
-      <PhotoBank
+    <div
+      className={`scrapbook-page${panelOpen ? " is-chatting" : ""}${revealed ? " is-revealed" : ""}`}
+    >
+      {revealed && !panelOpen ? (
+        <button
+          type="button"
+          className="chat-reopen"
+          onClick={() => setPanelOpen(true)}
+        >
+          my board
+        </button>
+      ) : null}
+
+      <SidePanel
+        messages={canvas.messages}
+        error={canvas.error}
+        busy={canvas.isPending}
+        active={panelOpen}
         photos={canvasState.photoBank}
         pinned={canvasState.pinned}
-        busy={canvas.isPending}
+        onClose={() => setPanelOpen(false)}
+        onSend={handleSubmit}
         onToggle={canvas.togglePinned}
+        onFilesPicked={canvas.addToBank}
       />
 
       <div className="paper-stage">
         <div className="paper-sheet" aria-hidden="true" />
-        <div className="scrapbook-board">
+
+        {!revealed ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img className="vision-mark" src="/assets/vision.gif" alt="" />
+        ) : null}
+
+        <div
+          className={`paper-bulldog${clip.dragging ? " is-dragging" : ""}${clipSize.resizing ? " is-resizing" : ""}`}
+          style={{
+            left: `${clip.pos.x}%`,
+            top: `${clip.pos.y}%`,
+            width: clipSize.width,
+            zIndex: clip.z ?? 60,
+          }}
+          {...clip.bind}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/assets/bulldog_clip.png" alt="" draggable={false} />
+          {done ? null : <ResizeHandle bind={clipSize.bind} />}
+        </div>
+
+        <div className={`scrapbook-board${loose ? "" : " is-contained"}`}>
           <ScrapbookCanvas canvasState={canvasState} done={done} />
         </div>
       </div>
 
-      <div className="prompt-dock">
-        <div className="director-slip" aria-live="polite">
-          {canvas.error ? (
-            <p className="director-error" role="alert">
-              {canvas.error}
-            </p>
-          ) : canvas.status ? (
-            <TypewriterText text={canvas.status} active />
-          ) : (
-            lastNode
-          )}
+      {!revealed ? (
+        <div className="prompt-dock">
+          <PromptBar
+            busy={canvas.isPending}
+            status={canvas.status}
+            error={canvas.error}
+            onSubmit={handleSubmit}
+            onFilesPicked={canvas.addToBank}
+          />
         </div>
+      ) : null}
 
-        <PromptBar
-          busy={canvas.isPending || done}
-          hasBoard={hasBoard}
-          onSubmit={handleSubmit}
-          onFilesPicked={canvas.addToBank}
-        />
-
-        {hasBoard && !done ? (
+      <footer className="page-footer">
+        {revealed && !done ? (
           <button
             type="button"
             className="keep-page"
@@ -77,7 +123,8 @@ export function Scrapbook() {
             keep this page
           </button>
         ) : null}
-      </div>
+        <UnsplashCredits activities={canvasState.activities} />
+      </footer>
     </div>
   );
 }

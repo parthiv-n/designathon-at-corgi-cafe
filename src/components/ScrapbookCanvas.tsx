@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import { NoteCard } from "@/components/NoteCard";
 import { PhotoCard } from "@/components/PhotoCard";
+import { ResizeHandle } from "@/components/ResizeHandle";
 import { TypewriterText } from "@/components/TypewriterText";
+import { useBoardDrag } from "@/hooks/useBoardDrag";
+import { useResize } from "@/hooks/useResize";
 import { buildCards } from "@/lib/layout";
 import type { CanvasState } from "@/lib/vibeBoard";
 
@@ -18,6 +21,10 @@ export function ScrapbookCanvas({
   // false so the server and the first client render agree; the board is empty
   // until a scrape lands, so there is nothing to re-lay-out before this settles.
   const [compact, setCompact] = useState(false);
+
+  // The title is a scrap like any other -- draggable and resizable.
+  const title = useBoardDrag({ x: 8, y: 6 }, "scrapbook-board", "text");
+  const titleSize = useResize(260, 140, 420);
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 720px)");
@@ -38,8 +45,19 @@ export function ScrapbookCanvas({
   return (
     <section className="scrap-canvas" aria-label="Scrapbook canvas">
       {caption ? (
-        <p key={`caption-${caption}`} className="page-title">
+        <p
+          key={`caption-${caption}`}
+          className={`page-title${title.dragging ? " is-dragging" : ""}${titleSize.resizing ? " is-resizing" : ""}`}
+          style={{
+            left: `${title.pos.x}%`,
+            top: `${title.pos.y}%`,
+            width: titleSize.width,
+            zIndex: title.z ?? 42,
+          }}
+          {...title.bind}
+        >
           <TypewriterText text={caption} active />
+          {done ? null : <ResizeHandle bind={titleSize.bind} />}
         </p>
       ) : null}
 

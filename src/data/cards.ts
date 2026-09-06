@@ -3,6 +3,8 @@
  * `@/lib/layout`, which lays live board data onto hand-tuned slots.
  */
 
+import type { PhotoCredit } from "@/lib/vibeBoard";
+
 export type PhotoAlt = {
   src: string;
   alt: string;
@@ -39,12 +41,19 @@ export type PhotoCardData = {
   decors: DecorAsset[];
   /** Rejecting the card cycles through these. Fed from the photo bank. */
   alts: PhotoAlt[];
+  /**
+   * Set only for photos Unsplash search found. Post photos and the curated
+   * fallbacks have no photographer to name.
+   */
+  credit?: PhotoCredit;
 };
 
 export type NoteCardData = {
   id: string;
   kind: "note";
   text: string;
+  /** Torn-paper scan the note is written on, from /public/note-cards. */
+  paper: string;
   x: number;
   y: number;
   rotate: number;

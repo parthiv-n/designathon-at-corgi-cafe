@@ -1,18 +1,16 @@
 import type { Metadata } from "next";
-import { Caveat, Special_Elite } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 
-const caveat = Caveat({
-  subsets: ["latin"],
-  variable: "--font-caveat",
-  weight: ["400", "500", "600", "700"],
+const myFirstFont = localFont({
+  src: "../../fonts/My First Font.otf",
+  variable: "--font-my-first",
   display: "swap",
 });
 
-const specialElite = Special_Elite({
-  subsets: ["latin"],
-  variable: "--font-special-elite",
-  weight: "400",
+const productSans = localFont({
+  src: "../../fonts/Product Sans Regular.ttf",
+  variable: "--font-product-sans",
   display: "swap",
 });
 
@@ -25,9 +23,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${caveat.variable} ${specialElite.variable} h-full`}
+      className={`${myFirstFont.variable} ${productSans.variable} h-full`}
     >
-      <body className="min-h-full">{children}</body>
+      <body className={`${myFirstFont.className} min-h-full`}>{children}</body>
     </html>
   );
 }

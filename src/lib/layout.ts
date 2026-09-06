@@ -4,7 +4,7 @@ import type {
   PhotoCardData,
   ScrapCard,
 } from "@/data/cards";
-import type { CanvasState } from "@/lib/vibeBoard";
+import type { CanvasState, PhotoCredit } from "@/lib/vibeBoard";
 import { displayPhotoUrl, unsplashUrlFor } from "@/lib/vibeBoard";
 
 /**
@@ -256,6 +256,20 @@ function fit(
   return { x: 6 + (x / 100) * 46, y: 2 + (y / 100) * 88 };
 }
 
+/** How many torn-paper scans live in /public/note-cards. */
+const NOTE_PAPERS = 19;
+
+/**
+ * A stable paper scan for a note. Keyed off the card id so a note keeps the
+ * same sheet across re-renders, and two notes side by side rarely match.
+ */
+function notePaper(id: string): string {
+  let hash = 0;
+  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) | 0;
+  const index = Math.abs(hash) % NOTE_PAPERS;
+  return `/note-cards/note-${String(index).padStart(2, "0")}.png`;
+}
+
 function photoCard(
   id: string,
   slotIndex: number,
@@ -263,7 +277,7 @@ function photoCard(
   alt: string,
   location: string,
   alts: PhotoAlt[],
-  labels: { label?: string; sublabel?: string } = {},
+  meta: { label?: string; sublabel?: string; credit?: PhotoCredit } = {},
   drift = 0,
   compact = false,
 ): PhotoCardData {
@@ -276,8 +290,9 @@ function photoCard(
     src: displayPhotoUrl(src),
     alt,
     location,
-    label: labels.label,
-    sublabel: labels.sublabel,
+    label: meta.label,
+    sublabel: meta.sublabel,
+    credit: meta.credit,
     // Overflow scraps reuse a slot but step off it, so a deep stack of pinned
     // photos fans out instead of hiding under itself.
     x: at.x,
@@ -329,7 +344,8 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
   // good slots. Anything past that came from the chat ("add some food options")
   // and fills the spare slots, drifting off them once those run out.
   activities.forEach((activity, index) => {
-    // A real photo of the place when Commons had one, else the curated set.
+    // A real photo of the place when Unsplash or Commons had one, else the
+    // curated set. `resolvedCredit` is set only on the Unsplash path.
     const src = activity.resolvedImage ?? unsplashUrlFor(activity.imageUrl);
     const isExtra = index >= ACTIVITY_SLOTS.length;
     const extraIndex = index - ACTIVITY_SLOTS.length;
@@ -347,6 +363,7 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
         {
           label: activity.title.toLowerCase(),
           sublabel: `${activity.cost} · ${activity.estimatedTransit}`,
+          credit: activity.resolvedCredit,
         },
         isExtra ? Math.floor(extraIndex / PINNED_SLOTS.length) : 0,
         compact,
@@ -384,6 +401,7 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
     cards.push({
       id: `note-${index}-${slug(activity.title)}`,
       kind: "note",
+      paper: notePaper(`note-${index}-${slug(activity.title)}`),
       text: trimNote(activity.description.toLowerCase()),
       x: at.x,
       y: at.y,
@@ -408,6 +426,7 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
     cards.push({
       id: "post-caption",
       kind: "note",
+      paper: notePaper("post-caption"),
       text: trimNote(post.caption, MAX_CAPTION_WORDS),
       x: at.x,
       y: at.y,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { HandText } from "@/lib/handText";
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -9,10 +10,12 @@ function prefersReducedMotion() {
 export function TypewriterText({
   text,
   active,
+  persistCaret = false,
   className,
 }: {
   text: string;
   active: boolean;
+  persistCaret?: boolean;
   className?: string;
 }) {
   const [shown, setShown] = useState("");
@@ -35,24 +38,22 @@ export function TypewriterText({
       if (index >= text.length) return;
 
       const ch = text[index - 1];
-      let delay = 24 + Math.random() * 72;
-      if (".!?,".includes(ch)) delay += 130 + Math.random() * 90;
-      if (ch === "—" || ch === "-") delay += 70;
-      if (ch === " ") delay += 8 + Math.random() * 18;
+      let delay = 48 + Math.random() * 90;
+      if (".!?,".includes(ch)) delay += 160 + Math.random() * 100;
+      if (ch === "—" || ch === "-") delay += 90;
+      if (ch === " ") delay += 16 + Math.random() * 24;
       timer = window.setTimeout(tick, delay);
     };
 
-    timer = window.setTimeout(tick, 90);
+    timer = window.setTimeout(tick, 140);
     return () => window.clearTimeout(timer);
   }, [text, active]);
 
   return (
     <span className={className}>
-      {shown}
-      {active && !done ? (
-        <span className="type-caret" aria-hidden>
-          ▍
-        </span>
+      <HandText text={shown} />
+      {active && (!done || persistCaret) ? (
+        <span className="type-caret" aria-hidden />
       ) : null}
     </span>
   );
