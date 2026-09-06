@@ -186,11 +186,14 @@ export function backdropQuery(
   vibeSummary: string,
   place?: string,
   titles: string[] = [],
+  destination?: string,
 ): string {
-  if (place?.trim()) return `${place.trim()} skyline`;
+  if (destination?.trim()) return `${destination.trim()} landscape`;
+  const named = titles.find((title) => title.trim());
+  if (named) return `${named.trim()} landscape`;
   if (vibeSummary.trim()) return `${vibeSummary.trim()} landscape`;
-  const named = titles.find(title => title.trim());
-  return named ? `${named.trim()} landscape` : '';
+  if (place?.trim()) return `${place.trim()} skyline`;
+  return '';
 }
 
 /**
@@ -239,20 +242,19 @@ export async function backdropForBoard(
   extras: Array<string | undefined> = [],
   place?: string,
   currentBackdrop?: string,
+  destination?: string,
 ): Promise<string | undefined> {
   const used = boardImageSrcs(activities, extras);
-  if (currentBackdrop && !usedIdentities(used).has(photoIdentity(currentBackdrop))) {
-    return currentBackdrop;
-  }
-
-  return (
-    (await resolveBackdropImage(
-      backdropQuery(
-        vibeSummary,
-        place,
-        activities.map(activity => activity.title),
-      ),
-      used,
-    )) ?? undefined
+  const found = await resolveBackdropImage(
+    backdropQuery(
+      vibeSummary,
+      place,
+      activities.map((activity) => activity.title),
+      destination,
+    ),
+    used,
   );
+
+  // Keep the last wallpaper only when the new destination has no photo.
+  return found ?? currentBackdrop;
 }

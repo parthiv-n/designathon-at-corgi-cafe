@@ -8,27 +8,22 @@ import { StampControls } from "@/components/StampControls";
 import { HandText } from "@/lib/handText";
 import { useBoardDrag } from "@/hooks/useBoardDrag";
 import { useResize } from "@/hooks/useResize";
-
-function nextRotation() {
-  return -8 + Math.random() * 18;
-}
+import { notePaper } from "@/lib/layout";
 
 export function PhotoCard({
   card,
   index,
   locked,
+  onRemove,
 }: {
   card: PhotoCardData;
   index: number;
   locked: boolean;
+  onRemove: () => void;
 }) {
   const pinRef = useRef<HTMLDivElement>(null);
   const [flipped, setFlipped] = useState(false);
-  const [accepted, setAccepted] = useState(false);
   const [leaving, setLeaving] = useState(false);
-  const [variant, setVariant] = useState(0);
-  const [rotate, setRotate] = useState(card.rotate);
-  const [cut, setCut] = useState(card.cut);
   const [failed, setFailed] = useState(false);
 
   // Position and size are the reader's, not the layout's: the slot only seeds
@@ -36,16 +31,8 @@ export function PhotoCard({
   const drag = useBoardDrag({ x: card.x, y: card.y });
   const size = useResize(card.width, 90, 480);
 
-  const pool = [
-    { src: card.src, alt: card.alt, location: card.location },
-    ...card.alts,
-  ];
-  const current = pool[variant % pool.length];
-
-  // Only the card's own photo carries the credit. Rejecting deals a bank photo
-  // onto it, so neither a bank photo nor a failed request should show this
-  // photographer's credit.
-  const showCredit = card.credit && variant === 0 && !failed;
+  const current = { src: card.src, alt: card.alt, location: card.location };
+  const showCredit = Boolean(card.credit) && !failed;
 
   useEffect(() => {
     if (!flipped) return;
@@ -60,29 +47,20 @@ export function PhotoCard({
     return () => document.removeEventListener("pointerdown", onPointer);
   }, [flipped]);
 
-  function handleReject() {
+  function handleRemove() {
     if (locked || leaving) return;
     setFlipped(false);
-    setAccepted(false);
     setLeaving(true);
-    window.setTimeout(() => {
-      setVariant((value) => value + 1);
-      setRotate(nextRotation());
-      setCut((value) => (value % 8) + 1);
-      // The next photo deserves its own chance to load.
-      setFailed(false);
-      setLeaving(false);
-    }, 420);
+    window.setTimeout(onRemove, 420);
   }
 
   return (
     <div
       ref={pinRef}
-      key={`${card.id}-${variant}`}
-      className={`scrap-pin is-photo${accepted ? " is-kept" : ""}${leaving ? " is-leaving" : ""}${drag.dragging ? " is-dragging" : ""}${drag.settled ? " is-placed" : ""}${size.resizing ? " is-resizing" : ""}`}
+      className={`scrap-pin is-photo${leaving ? " is-leaving" : ""}${drag.dragging ? " is-dragging" : ""}${drag.settled ? " is-placed" : ""}${size.resizing ? " is-resizing" : ""}`}
       style={
         {
-          "--rot": `${rotate}deg`,
+          "--rot": `${card.rotate}deg`,
           left: `${drag.pos.x}%`,
           top: `${drag.pos.y}%`,
           width: `${size.width}px`,
@@ -107,7 +85,7 @@ export function PhotoCard({
           setFlipped((value) => !value);
         }}
       >
-        <span className={`photo-face photo-front cut-${cut}`}>
+        <span className="photo-face photo-front">
           {failed ? null : (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img
@@ -127,8 +105,14 @@ export function PhotoCard({
             />
           )}
         </span>
-        <span className={`photo-face photo-back cut-${cut}`}>
-          <span className="photo-back-paper" />
+        <span className="photo-face photo-back">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            className="photo-back-paper"
+            src={notePaper(`${card.id}-back`)}
+            alt=""
+            draggable={false}
+          />
           <span className="photo-back-caption">
             <HandText text={current.location} />
           </span>
@@ -144,14 +128,10 @@ export function PhotoCard({
           ) : null}
         </span>
       ) : null}
-      {accepted ? <span className="kept-stamp">kept</span> : null}
       <AnalogDecor items={card.decors} />
       {locked ? null : (
         <>
-          <StampControls
-            onAccept={() => setAccepted(true)}
-            onReject={handleReject}
-          />
+          <StampControls onRemove={handleRemove} />
           <ResizeHandle bind={size.bind} />
         </>
       )}

@@ -19,8 +19,11 @@ import { displayPhotoUrl } from "@/lib/vibeBoard";
 type PhotoSlot = {
   x: number;
   y: number;
+  compactX: number;
+  compactY: number;
   rotate: number;
   width: number;
+  compactWidth: number;
   cut: number;
   z: number;
   decors: DecorAsset[];
@@ -29,6 +32,8 @@ type PhotoSlot = {
 type NoteSlot = {
   x: number;
   y: number;
+  compactX: number;
+  compactY: number;
   rotate: number;
   cut: number;
   z: number;
@@ -36,19 +41,23 @@ type NoteSlot = {
 };
 
 /**
- * Slot 0 is the hero (the post's cover), 1-2 the itinerary, 3-5 pinned extras.
+ * One photo per quarter of the paper. Coordinates are the card's top-left,
+ * inset so a ~170px print still sits on the sheet — including the narrower
+ * chatting stage. The title beads occupy the top-left strip, so the NW slot
+ * starts below them.
  *
- * A photo card is roughly 13-17% of the stage wide and 25-33% tall; a note is
- * about 17% by 20%. The top-left corner from x14 to x48, y3 to y14 is left
- * empty on purpose -- that is where the handwritten title sits, and cards
- * outrank it in the stacking order, so anything parked there buries it.
+ *   0 NW · 1 NE
+ *   2 SW · 3 SE
  */
 const PHOTO_SLOTS: PhotoSlot[] = [
   {
-    x: 3,
-    y: 18,
-    rotate: -7.8,
-    width: 200,
+    x: 6,
+    y: 26,
+    compactX: 5,
+    compactY: 18,
+    rotate: -1.6,
+    width: 172,
+    compactWidth: 132,
     cut: 1,
     z: 14,
     decors: [
@@ -62,31 +71,38 @@ const PHOTO_SLOTS: PhotoSlot[] = [
       },
     ],
   },
-  { x: 50, y: 4, rotate: 9.4, width: 168, cut: 5, z: 16, decors: [] },
   {
-    x: 78,
-    y: 18,
-    rotate: -6.8,
-    width: 186,
-    cut: 3,
-    z: 12,
-    decors: [
-      {
-        src: "/ephemera/ephemera-06.png",
-        kind: "ephemera",
-        rotate: 14,
-        width: 78,
-        right: "-8%",
-        bottom: "6%",
-      },
-    ],
+    x: 57,
+    y: 16,
+    compactX: 52,
+    compactY: 10,
+    rotate: 1.8,
+    width: 164,
+    compactWidth: 128,
+    cut: 5,
+    z: 16,
+    decors: [],
   },
-  { x: 23, y: 34, rotate: 8.2, width: 160, cut: 6, z: 18, decors: [] },
   {
-    x: 64,
+    x: 8,
     y: 56,
-    rotate: -8,
-    width: 176,
+    compactX: 6,
+    compactY: 50,
+    rotate: 1.4,
+    width: 156,
+    compactWidth: 124,
+    cut: 6,
+    z: 18,
+    decors: [],
+  },
+  {
+    x: 55,
+    y: 54,
+    compactX: 50,
+    compactY: 48,
+    rotate: -1.8,
+    width: 168,
+    compactWidth: 128,
     cut: 2,
     z: 20,
     decors: [
@@ -98,45 +114,19 @@ const PHOTO_SLOTS: PhotoSlot[] = [
         top: "4%",
         right: "-12%",
       },
-      {
-        src: "/ephemera/ephemera-07.png",
-        kind: "ephemera",
-        rotate: -8,
-        width: 42,
-        left: "6%",
-        bottom: "8%",
-      },
-    ],
-  },
-  { x: 84, y: 46, rotate: 6.6, width: 154, cut: 7, z: 11, decors: [] },
-  {
-    x: 43,
-    y: 58,
-    rotate: 10,
-    width: 168,
-    cut: 4,
-    z: 15,
-    decors: [
-      {
-        src: "/washi-tape/tape-16.png",
-        kind: "washi",
-        rotate: -14,
-        width: 110,
-        bottom: "-4%",
-        left: "10%",
-      },
     ],
   },
 ];
 
 const NOTE_SLOTS: NoteSlot[] = [
-  { x: 2, y: 58, rotate: -4.6, cut: 8, z: 10, decors: [] },
   {
-    x: 45,
-    y: 36,
-    rotate: -7.9,
-    cut: 3,
-    z: 17,
+    x: 37,
+    y: 40,
+    compactX: 28,
+    compactY: 36,
+    rotate: -4.8,
+    cut: 8,
+    z: 24,
     decors: [
       {
         src: "/washi-tape/tape-12.png",
@@ -148,29 +138,14 @@ const NOTE_SLOTS: NoteSlot[] = [
       },
     ],
   },
-  {
-    x: 23,
-    y: 66,
-    rotate: 8.8,
-    cut: 5,
-    z: 13,
-    decors: [
-      {
-        src: "/ephemera/ephemera-03.png",
-        kind: "ephemera",
-        rotate: -12,
-        width: 56,
-        right: "-10%",
-        top: "18%",
-      },
-    ],
-  },
 ];
 
-/** Slot the hero photo occupies; the itinerary starts after it. */
+/** Slot the hero photo occupies; the itinerary fills the other quarters. */
 const HERO_SLOT = 0;
-const ACTIVITY_SLOTS = [1, 2, 3];
-const PINNED_SLOTS = [4, 5, 6];
+const QUARTERS = [0, 1, 2, 3];
+const ACTIVITY_SLOTS = [0, 1, 2, 3];
+const PINNED_SLOTS = [0, 1, 2, 3];
+const MAX_PHOTO_CARDS = 4;
 
 /** Notes read as marginalia, so they sit narrower than the photos. */
 const MAX_NOTE_WORDS = 18;
@@ -179,13 +154,14 @@ const MAX_NOTE_WORDS = 18;
 const MAX_CAPTION_WORDS = 26;
 
 /**
- * Where the post's own caption gets taped down. Deliberately off to the right,
- * away from the itinerary notes on the left, so the page reads as "what they
- * said" beside "what we made of it".
+ * Where the post's own caption gets taped down. Lands in the NE quarter so it
+ * stays on the paper when the page has no itinerary photos beside the hero.
  */
 const CAPTION_SLOT: NoteSlot = {
-  x: 63,
-  y: 2,
+  x: 56,
+  y: 18,
+  compactX: 48,
+  compactY: 12,
   rotate: 4.2,
   cut: 6,
   z: 22,
@@ -218,6 +194,16 @@ function slug(value: string): string {
     .slice(0, 40);
 }
 
+function uniquePhotoSources(sources: string[]): string[] {
+  const seen = new Set<string>();
+  return sources.filter((src) => {
+    const displayed = displayPhotoUrl(src);
+    if (seen.has(displayed)) return false;
+    seen.add(displayed);
+    return true;
+  });
+}
+
 /**
  * Other photos from the post, as the reject-stamp pool. This is what wires the
  * bank into the existing gesture: rejecting a card deals the next scraped photo
@@ -229,8 +215,11 @@ function bankAlts(
   location: string,
   labels: Record<string, string> = {},
 ): PhotoAlt[] {
-  return bank
-    .filter((src) => src !== exclude)
+  return uniquePhotoSources(bank)
+    .filter(
+      (src) =>
+        !exclude || displayPhotoUrl(src) !== displayPhotoUrl(exclude),
+    )
     .map((src) => ({
       src: displayPhotoUrl(src),
       // When the caption numbered its frames, each one is a named place rather
@@ -240,23 +229,29 @@ function bankAlts(
     }));
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 /**
- * Squeezes a slot onto a narrow screen.
- *
- * Slot coordinates are percentages of the stage, but a card's *width* is
- * clamped in pixels, so on a phone a card that reads as 16% of a laptop stage
- * becomes more like 35% and the right-hand slots hang off the torn edge. This
- * pulls everything back into the left two thirds and stretches the vertical
- * spread to compensate. Scraps still overlap -- that is the look -- but they
- * stay on the paper.
+ * Keeps a card's top-left on the paper. Percentages leave room for a ~170px
+ * photo (or the smaller compact print) plus a little torn-edge margin.
  */
-function fit(
+function keepOnPaper(
   x: number,
   y: number,
   compact: boolean,
 ): { x: number; y: number } {
-  if (!compact) return { x, y };
-  return { x: 6 + (x / 100) * 46, y: 2 + (y / 100) * 88 };
+  return {
+    x: clamp(x, compact ? 4 : 5, compact ? 54 : 66),
+    y: clamp(y, compact ? 8 : 14, compact ? 48 : 58),
+  };
+}
+
+function fitNote(slot: NoteSlot, compact: boolean): { x: number; y: number } {
+  return compact
+    ? { x: slot.compactX, y: slot.compactY }
+    : { x: slot.x, y: slot.y };
 }
 
 /** How many torn-paper scans live in /public/note-cards. */
@@ -266,7 +261,7 @@ const NOTE_PAPERS = 19;
  * A stable paper scan for a note. Keyed off the card id so a note keeps the
  * same sheet across re-renders, and two notes side by side rarely match.
  */
-function notePaper(id: string): string {
+export function notePaper(id: string): string {
   let hash = 0;
   for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) | 0;
   const index = Math.abs(hash) % NOTE_PAPERS;
@@ -284,8 +279,19 @@ function photoCard(
   drift = 0,
   compact = false,
 ): PhotoCardData {
-  const slot = PHOTO_SLOTS[slotIndex % PHOTO_SLOTS.length];
-  const at = fit(slot.x + drift * 4, Math.min(slot.y + drift * 5, 64), compact);
+  const quarter = slotIndex % PHOTO_SLOTS.length;
+  const slot = PHOTO_SLOTS[quarter];
+  const originX = compact ? slot.compactX : slot.x;
+  const originY = compact ? slot.compactY : slot.y;
+  // Extra cards reuse a quarter; step toward the page center so they stay on
+  // the paper instead of walking off the torn edge.
+  const inwardX = quarter % 2 === 0 ? 1 : -1;
+  const inwardY = quarter < 2 ? 1 : -1;
+  const at = keepOnPaper(
+    originX + inwardX * drift * 3,
+    originY + inwardY * drift * 3,
+    compact,
+  );
 
   return {
     id,
@@ -296,12 +302,10 @@ function photoCard(
     label: meta.label,
     sublabel: meta.sublabel,
     credit: meta.credit,
-    // Overflow scraps reuse a slot but step off it, so a deep stack of pinned
-    // photos fans out instead of hiding under itself.
     x: at.x,
     y: at.y,
-    rotate: slot.rotate + drift * 2.5,
-    width: slot.width,
+    rotate: Math.max(-2, Math.min(2, slot.rotate + drift * 0.4)),
+    width: compact ? slot.compactWidth : slot.width,
     cut: slot.cut,
     z: slot.z + drift,
     decors: drift === 0 ? slot.decors : [],
@@ -325,8 +329,11 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
   if (activities.length === 0 && !originalImage) return [];
 
   const cards: ScrapCard[] = [];
+  const occupiedPhotoSlots = new Set<number>();
+  const activitySlots = originalImage ? [1, 2, 3] : [...QUARTERS];
 
   if (originalImage) {
+    occupiedPhotoSlots.add(HERO_SLOT);
     cards.push(
       photoCard(
         "hero",
@@ -357,26 +364,30 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
     );
   }
 
-  // The first three stops are the itinerary the photo was read into and get the
-  // good slots. Anything past that came from the chat ("add some food options")
-  // and fills the spare slots, drifting off them once those run out.
+  // Each stop with a photo takes the next free quarter. Chat extras reuse a
+  // quarter and step toward the middle so they stay on the paper.
   activities.forEach((activity, index) => {
     // Only render a photo card when search found this specific place. The
     // activity's note still renders below when neither source has a relevant
     // result, without filling the gap with unrelated stock travel imagery.
     const src = activity.resolvedImage;
     if (!src) return;
+    const currentPhotoCount = cards.filter((card) => card.kind === "photo").length;
+    if (currentPhotoCount >= MAX_PHOTO_CARDS) return;
 
     // `resolvedCredit` is set only on the Unsplash path.
-    const isExtra = index >= ACTIVITY_SLOTS.length;
-    const extraIndex = index - ACTIVITY_SLOTS.length;
+    const isExtra = index >= activitySlots.length;
+    const extraIndex = index - activitySlots.length;
+
+    const slotIndex = isExtra
+      ? PINNED_SLOTS[extraIndex % PINNED_SLOTS.length]
+      : activitySlots[index];
+    occupiedPhotoSlots.add(slotIndex);
 
     cards.push(
       photoCard(
         `act-${index}-${slug(activity.title)}`,
-        isExtra
-          ? PINNED_SLOTS[extraIndex % PINNED_SLOTS.length]
-          : ACTIVITY_SLOTS[index],
+        slotIndex,
         src,
         activity.title,
         `${activity.title.toLowerCase()} — ${activity.cost}, ${activity.placeType}`,
@@ -392,15 +403,69 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
     );
   });
 
-  // Pinned bank photos queue up behind anything the chat added.
-  const pinnedOffset = Math.max(0, activities.length - ACTIVITY_SLOTS.length);
-  pinned.forEach((src, index) => {
-    const seat = pinnedOffset + index;
+  // Carousel posts often yield fewer searchable place photos than the board
+  // needs. Fill only from that same post, never unrelated stock imagery.
+  const placedPhotoSources = new Set(
+    cards
+      .filter((card): card is PhotoCardData => card.kind === "photo")
+      .map((card) => card.src),
+  );
+  const uniquePinned = uniquePhotoSources(pinned);
+  const pinnedPhotoSources = new Set(uniquePinned.map(displayPhotoUrl));
+  const pendingPinnedCount = uniquePinned.filter(
+    (src) => !placedPhotoSources.has(displayPhotoUrl(src)),
+  ).length;
+  const minimumFillers = uniquePhotoSources(photoBank)
+    .filter(
+      (src) =>
+        !placedPhotoSources.has(displayPhotoUrl(src)) &&
+        !pinnedPhotoSources.has(displayPhotoUrl(src)),
+    )
+    .slice(
+      0,
+      Math.max(
+        0,
+        MAX_PHOTO_CARDS - placedPhotoSources.size - pendingPinnedCount,
+      ),
+    );
+
+  minimumFillers.forEach((src, index) => {
+    const slotIndex =
+      ACTIVITY_SLOTS.find((slot) => !occupiedPhotoSlots.has(slot)) ??
+      ACTIVITY_SLOTS[(placedPhotoSources.size + index) % ACTIVITY_SLOTS.length];
+    occupiedPhotoSlots.add(slotIndex);
 
     cards.push(
       photoCard(
-        `pin-${slug(src.slice(-24))}`,
-        PINNED_SLOTS[seat % PINNED_SLOTS.length],
+        `bank-fill-${index}-${slug(src.slice(-24))}`,
+        slotIndex,
+        src,
+        photoLabels[src] ?? "A photo from the post",
+        photoLabels[src]?.toLowerCase() ?? "from the post",
+        bankAlts(photoBank, src, "another frame from the post", photoLabels),
+        { label: photoLabels[src]?.toLowerCase() ?? "from the post" },
+        0,
+        compact,
+      ),
+    );
+  });
+
+  // Pinned bank photos queue up behind anything the chat added.
+  const pinnedOffset = Math.max(0, activities.length - activitySlots.length);
+  uniquePinned.forEach((src, index) => {
+    const currentPhotoCount = cards.filter((card) => card.kind === "photo").length;
+    if (currentPhotoCount >= MAX_PHOTO_CARDS) return;
+
+    const seat = pinnedOffset + index;
+    const slotIndex =
+      ACTIVITY_SLOTS.find((slot) => !occupiedPhotoSlots.has(slot)) ??
+      PINNED_SLOTS[seat % PINNED_SLOTS.length];
+    occupiedPhotoSlots.add(slotIndex);
+
+    cards.push(
+      photoCard(
+        `pin-${index}-${slug(src.slice(-24))}`,
+        slotIndex,
         src,
         photoLabels[src] ?? "A photo you pinned from the bank",
         photoLabels[src]?.toLowerCase() ?? "pinned from the bank",
@@ -412,12 +477,10 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
     );
   });
 
-  // Keep generated boards image-led: one handwritten note summarizes the first
-  // stop, while every other activity uses its photo's compact sticky label.
+  // One written scrap keeps the generated page image-led.
   activities.slice(0, 1).forEach((activity, index) => {
     const slot = NOTE_SLOTS[index];
-
-    const at = fit(slot.x, slot.y, compact);
+    const at = fitNote(slot, compact);
 
     cards.push({
       id: `note-${index}-${slug(activity.title)}`,
@@ -429,7 +492,6 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
       rotate: slot.rotate,
       cut: slot.cut,
       z: slot.z,
-      // The palette lost its strip to the photo bank, so it lives on as ink.
       ink: colorPalette[index % colorPalette.length],
       decors: slot.decors,
       alts: [
@@ -440,9 +502,9 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
   });
 
   // The post's own words, when it had any, torn out and taped on.
-  if (post.caption) {
+  if (post.caption && activities.length === 0) {
     const slot = CAPTION_SLOT;
-    const at = fit(slot.x, slot.y, compact);
+    const at = fitNote(slot, compact);
 
     cards.push({
       id: "post-caption",
@@ -464,5 +526,5 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
     });
   }
 
-  return cards;
+  return cards.filter((card) => !(canvas.dismissed ?? []).includes(card.id));
 }

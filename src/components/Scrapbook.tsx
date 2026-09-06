@@ -17,7 +17,6 @@ export function Scrapbook() {
   // The one canvas for the whole page. useCanvasController is per-instance
   // state, so calling it anywhere else would fork the board.
   const canvas = useCanvasController(EMPTY_CANVAS);
-  const [done, setDone] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [titlePrompt, setTitlePrompt] = useState("");
   // The board stays masked to the paper until the drop animation has finished;
@@ -29,7 +28,7 @@ export function Scrapbook() {
 
   // The bulldog clip is furniture, not content: it drags and resizes but holds
   // no state anyone needs back.
-  const clip = useBoardDrag({ x: 77, y: -11 }, "paper-stage", "chrome");
+  const clip = useBoardDrag({ x: 77, y: 2 }, "paper-stage", "chrome");
   const clipSize = useResize(146, 64, 220);
 
   const { canvasState } = canvas;
@@ -37,7 +36,11 @@ export function Scrapbook() {
     canvasState.activities.length > 0 || !!canvasState.originalImage;
   // Wallpaper is a separate destination photo. Never reuse a card, hero, or
   // bank image -- those already live on the page.
-  const destinationImage = canvasState.backdropImage;
+  const destinationImage =
+    canvasState.backdropImage ??
+    canvasState.activities.find((activity) => activity.resolvedImage)
+      ?.resolvedImage ??
+    canvasState.originalImage;
 
   const markHowToTyped = useCallback(() => {
     setTypedHowTo((count) => count + 1);
@@ -135,21 +138,21 @@ export function Scrapbook() {
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/assets/bulldog_clip.png" alt="" draggable={false} />
-          {done ? null : <ResizeHandle bind={clipSize.bind} />}
+          <ResizeHandle bind={clipSize.bind} />
         </div>
 
         <div className={`scrapbook-board${loose ? "" : " is-contained"}`}>
           <ScrapbookCanvas
             canvasState={canvasState}
-            done={done}
             titlePrompt={
               titlePrompt || canvasState.post.place || canvasState.vibeSummary
             }
+            onRemove={canvas.removeCard}
           />
         </div>
       </div>
 
-      {!revealed ? (
+      {!revealed && !panelOpen ? (
         <div className="prompt-dock">
           <PromptBar
             busy={canvas.isPending}
@@ -164,15 +167,6 @@ export function Scrapbook() {
       ) : null}
 
       <footer className="page-footer">
-        {revealed && !done ? (
-          <button
-            type="button"
-            className="keep-page"
-            onClick={() => setDone(true)}
-          >
-            keep this page
-          </button>
-        ) : null}
         <UnsplashCredits activities={canvasState.activities} />
       </footer>
     </div>

@@ -9,6 +9,7 @@ import {
 
 import { withModelFallback } from '../lib/modelChain';
 import { backdropForBoard, withPlacePhotos } from '../lib/placePhotos';
+import { DESTINATION_GUIDE } from '../lib/destination';
 import {
   FALLBACK_VIBE_BOARD,
   parseCaptionLegend,
@@ -67,7 +68,11 @@ Rules:
   "attraction", "hike", "restaurant", "bar", or "gallery". Never put travel
   time or transport in this field.
 - activities[].imageUrl is only a fallback: a lowercase hyphenated keyword for
-  the look of the place (e.g. "jazz-bar-dark"), never a URL.`;
+  the look of the place (e.g. "jazz-bar-dark"), never a URL.
+- destination is the place the letter beads spell. Infer the city, island,
+  region or country from the photos, caption and tagged place.
+
+${DESTINATION_GUIDE}`;
 
 interface InstagramPost {
   /** Every frame in the post, cover first. Never empty. */
@@ -492,7 +497,9 @@ export async function processInstagramVibe(
                     params.vibeSummary,
                     activities,
                     [post.imageUrls[0], ...post.imageUrls],
-                    post.details.place,
+                    params.destination || post.details.place,
+                    undefined,
+                    params.destination,
                   ),
                 });
                 closeBoard();

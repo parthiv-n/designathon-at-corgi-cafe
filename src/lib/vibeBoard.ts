@@ -62,6 +62,9 @@ export const vibeBoardSchema = z.object({
   originalImage: z
     .string()
     .describe('The exact image URL you were given, copied verbatim'),
+  destination: guided(
+    'The place name for the letter-bead title. One short proper noun: a city, island, region or country. Examples: "Ibiza", "Sweden", "Brisbane", "New York". Never a vibe word or a full sentence.',
+  ),
   vibeSummary: z
     .string()
     .describe(
@@ -167,6 +170,8 @@ export type VibeBoardPayload = VibeBoardData & {
 /** What the chat director mutates. */
 export interface CanvasState {
   vibeSummary: string;
+  /** Place name the letter beads spell. Lifted from the prompt or the post. */
+  destination: string;
   colorPalette: string[];
   activities: Activity[];
   /** Every image pulled from the scraped post. Drives the photo bank rail. */
@@ -179,16 +184,20 @@ export interface CanvasState {
   backdropImage?: string;
   /** Caption, author and place, straight off the post. */
   post: PostDetails;
+  /** Cards the user crossed off the page. */
+  dismissed: string[];
 }
 
 /** Nothing scraped yet: blank board, empty slots in the rail. */
 export const EMPTY_CANVAS: CanvasState = {
   vibeSummary: '',
+  destination: '',
   colorPalette: ['#1f4e6b', '#e2b84a', '#8e3b4a'],
   activities: [],
   photoBank: [],
   pinned: [],
   post: {},
+  dismissed: [],
 };
 
 export interface ChatMessage {
@@ -202,7 +211,13 @@ export interface ChatMessage {
  * the client folds them into state with applyCanvasPatch.
  */
 export type CanvasPatch =
-  | { type: 'theme'; vibeSummary: string; colorPalette: string[] }
+  | {
+      type: 'theme';
+      vibeSummary: string;
+      colorPalette: string[];
+      destination?: string;
+      backdropImage?: string;
+    }
   | { type: 'swap'; index: number; activity: Activity; backdropImage?: string }
   | { type: 'add'; activities: Activity[]; backdropImage?: string }
   | {
@@ -210,6 +225,7 @@ export type CanvasPatch =
       vibeSummary: string;
       colorPalette: string[];
       activities: Activity[];
+      destination?: string;
       backdropImage?: string;
     };
 
@@ -271,13 +287,19 @@ export function looksLikeInstagramUrl(value: string): boolean {
 export function describePatch(patch: CanvasPatch): string {
   switch (patch.type) {
     case 'theme':
-      return `Done — I gave your board a "${patch.vibeSummary}" feel.`;
+      return `Done — I gave your board a ${patch.vibeSummary.toLowerCase()} feel.`;
     case 'swap':
-      return `Good call — I swapped in "${patch.activity.title}" (${patch.activity.cost}, ${patch.activity.placeType}).`;
+      return `Swapped that stop for ${patch.activity.title}.`;
     case 'add':
-      return `Absolutely — I added ${patch.activities.map(a => `"${a.title}"`).join(', ')} to your page.`;
-    case 'board':
-      return `Fresh start! I rebuilt your board with a "${patch.vibeSummary}" feel: ${patch.activities.map(a => a.title).join(', ')}.`;
+      return `Added ${patch.activities.map(a => a.title).join(', ')}.`;
+    case 'board': {
+      const place = patch.destination?.trim();
+      const vibe = patch.vibeSummary.trim().toLowerCase();
+      if (place && vibe) return `${place} — ${vibe}.`;
+      if (place) return `${place}.`;
+      if (vibe) return `Here's a ${vibe} board.`;
+      return 'Your board is ready.';
+    }
     default:
       return 'All set — I updated your board.';
   }
@@ -319,6 +341,8 @@ export function applyCanvasPatch(
         ...state,
         vibeSummary: patch.vibeSummary,
         colorPalette: normalizePalette(patch.colorPalette, state.colorPalette),
+        destination: patch.destination?.trim() || state.destination,
+        backdropImage: patch.backdropImage ?? state.backdropImage,
       };
 
     case 'swap': {
@@ -360,7 +384,9 @@ export function applyCanvasPatch(
         colorPalette: normalizePalette(patch.colorPalette, state.colorPalette),
         activities:
           patch.activities?.length > 0 ? patch.activities : state.activities,
+        destination: patch.destination?.trim() || state.destination,
         backdropImage: patch.backdropImage ?? state.backdropImage,
+        dismissed: [],
       };
 
     default:
@@ -454,6 +480,7 @@ export const MOCK_POST = {
  */
 export const FALLBACK_VIBE_BOARD: VibeBoardData = {
   originalImage: MOCK_POST.imageUrls[0],
+  destination: 'Tokyo',
   vibeSummary: 'Neon Cyberpunk Night',
   colorPalette: ['#12071f', '#ff2e88', '#00e5ff'],
   activities: [

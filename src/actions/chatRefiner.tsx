@@ -8,6 +8,7 @@ import {
 } from '@ai-sdk/rsc';
 import { z } from 'zod';
 
+import { DESTINATION_GUIDE } from '../lib/destination';
 import { withModelFallback } from '../lib/modelChain';
 import { backdropForBoard, withPlacePhotos } from '../lib/placePhotos';
 import {
@@ -30,6 +31,7 @@ const DIRECTOR_PROMPT = `You are a warm, approachable travel art director and li
  * gets one tool call per turn and has to pick the right granularity itself.
  */
 const TOOL_ROUTING_RULES = `Pick exactly ONE tool per reply:
+- regenerate_entire_board with three stops when the canvas has no activities yet.
 - add_spots when the user wants MORE of something on the page -- "add some food
   options", "what about bars", "more hikes", "somewhere for coffee". This is the
   common case; reach for it before any of the others.
@@ -48,7 +50,11 @@ activities[].placeType is the short category printed under the place name:
 travel time or transport there.
 
 activities[].imageUrl is only the fallback -- a lowercase hyphenated keyword for
-the look of the place (e.g. "jazz-bar-dark"), never a URL.`;
+the look of the place (e.g. "jazz-bar-dark"), never a URL.
+
+When you rebuild the board, lift destination from the user's latest prompt.
+
+${DESTINATION_GUIDE}`;
 
 function describeCanvas(state: CanvasState): string {
   // The caption is usually the only hard evidence of *where* this is, so the
@@ -65,6 +71,7 @@ function describeCanvas(state: CanvasState): string {
   return `Here is the canvas you are currently directing:
 
 vibeSummary: ${state.vibeSummary}
+destination: ${state.destination || '(none yet)'}
 colorPalette: ${state.colorPalette.join(', ')}
 photoBank: ${state.photoBank.length} photo(s) scraped from the user's Instagram post are pinned in the rail beside the board. Palette shifts should stay true to them.
 ${
@@ -198,6 +205,7 @@ export async function refineCanvasState(
                     ],
                     currentCanvasState.post.place,
                     currentCanvasState.backdropImage,
+                    currentCanvasState.destination,
                   ),
                 });
                 closePatch();
@@ -235,6 +243,18 @@ export async function refineCanvasState(
                   colorPalette: normalizePalette(
                     newPalette,
                     currentCanvasState.colorPalette,
+                  ),
+                  backdropImage: await backdropForBoard(
+                    vibeSummary,
+                    currentCanvasState.activities,
+                    [
+                      currentCanvasState.originalImage,
+                      ...currentCanvasState.photoBank,
+                      ...currentCanvasState.pinned,
+                    ],
+                    currentCanvasState.post.place,
+                    currentCanvasState.backdropImage,
+                    currentCanvasState.destination,
                   ),
                 });
                 closePatch();
@@ -286,6 +306,7 @@ export async function refineCanvasState(
                     ],
                     currentCanvasState.post.place,
                     currentCanvasState.backdropImage,
+                    currentCanvasState.destination,
                   ),
                 });
                 closePatch();
@@ -320,11 +341,17 @@ export async function refineCanvasState(
                   .describe(
                     'Exactly three new stops, ordered as a walkable route',
                   ),
+                destination: z
+                  .string()
+                  .describe(
+                    'The place name for the letter beads, lifted from the user prompt. One short proper noun such as Ibiza, Sweden, Brisbane or New York.',
+                  ),
               }),
               generate: async function* ({
                 newVibeSummary,
                 colorPalette,
                 activities,
+                destination,
               }) {
                 yield <p>Got it — I’m giving the whole page a fresh direction...</p>;
 
@@ -341,6 +368,7 @@ export async function refineCanvasState(
                   vibeSummary: newVibeSummary,
                   colorPalette: palette,
                   activities: withPhotos,
+                  destination,
                   backdropImage: await backdropForBoard(
                     newVibeSummary,
                     withPhotos,
@@ -349,12 +377,20 @@ export async function refineCanvasState(
                       ...currentCanvasState.photoBank,
                       ...currentCanvasState.pinned,
                     ],
-                    currentCanvasState.post.place,
+                    destination || currentCanvasState.post.place,
+                    currentCanvasState.backdropImage,
+                    destination,
                   ),
                 });
                 closePatch();
 
-                return <p>Here you go — a fresh {newVibeSummary} board.</p>;
+                return (
+                  <p>
+                    {destination
+                      ? `${destination} — ${newVibeSummary.toLowerCase()}.`
+                      : `${newVibeSummary.toLowerCase()}.`}
+                  </p>
+                );
               },
             },
           },

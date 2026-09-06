@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BeadTitle } from "@/components/BeadTitle";
+import { BoardAssets } from "@/components/BoardAssets";
 import { NoteCard } from "@/components/NoteCard";
 import { PhotoCard } from "@/components/PhotoCard";
 import { buildCards } from "@/lib/layout";
@@ -9,15 +10,12 @@ import type { CanvasState } from "@/lib/vibeBoard";
 
 export function ScrapbookCanvas({
   canvasState,
-  done,
-  showHowTo = false,
   titlePrompt,
+  onRemove,
 }: {
   canvasState: CanvasState;
-  done: boolean;
-  showHowTo?: boolean;
-  onHowToTyped?: () => void;
   titlePrompt?: string;
+  onRemove: (id: string) => void;
 }) {
   // Matches the breakpoint globals.css uses for the rest of the page. Starts
   // false so the server and the first client render agree; the board is empty
@@ -35,8 +33,9 @@ export function ScrapbookCanvas({
 
   const cards = buildCards(canvasState, compact);
   const heading =
-    titlePrompt?.trim() ||
+    canvasState.destination.trim() ||
     canvasState.post.place ||
+    titlePrompt?.trim() ||
     canvasState.vibeSummary;
 
   // A new post re-keys every card so the whole page re-pins; within one post,
@@ -45,9 +44,10 @@ export function ScrapbookCanvas({
 
   return (
     <section className="scrap-canvas" aria-label="Scrapbook canvas">
-      {!showHowTo && heading ? (
-        <BeadTitle prompt={heading} locked={done} />
+      {cards.length > 0 ? (
+        <BoardAssets seed={`${heading}-${generation}`} />
       ) : null}
+      {heading ? <BeadTitle prompt={heading} locked={false} /> : null}
 
       {cards.map((card, index) =>
         card.kind === "photo" ? (
@@ -55,28 +55,19 @@ export function ScrapbookCanvas({
             key={`${generation}-${card.id}`}
             card={card}
             index={index}
-            locked={done}
+            locked={false}
+            onRemove={() => onRemove(card.id)}
           />
         ) : (
           <NoteCard
             key={`${generation}-${card.id}`}
             card={card}
             index={index}
-            locked={done}
+            locked={false}
+            onRemove={() => onRemove(card.id)}
           />
         ),
       )}
-
-      {done ? (
-        <div className="saved-stamp" aria-live="polite">
-          <span>saved</span>
-          <em>
-            {new Date()
-              .toLocaleDateString("en-GB", { day: "numeric", month: "short" })
-              .toLowerCase()}
-          </em>
-        </div>
-      ) : null}
     </section>
   );
 }

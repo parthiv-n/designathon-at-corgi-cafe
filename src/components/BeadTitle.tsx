@@ -3,46 +3,7 @@
 import { ResizeHandle } from "@/components/ResizeHandle";
 import { useBoardDrag } from "@/hooks/useBoardDrag";
 import { useResize } from "@/hooks/useResize";
-
-const INTENT_WORDS = new Set([
-  "adventure",
-  "bar",
-  "bars",
-  "best",
-  "cafe",
-  "cafes",
-  "coffee",
-  "day",
-  "food",
-  "guide",
-  "holiday",
-  "ideas",
-  "inspo",
-  "itinerary",
-  "night",
-  "places",
-  "restaurant",
-  "restaurants",
-  "things",
-  "tour",
-  "travel",
-  "trip",
-  "weekend",
-]);
-
-function destinationWord(prompt: string) {
-  const words = prompt
-    .normalize("NFKD")
-    .replace(/['’]/g, "")
-    .split(/[^a-zA-Z]+/)
-    .filter(Boolean);
-
-  const placeWords = words.filter(
-    (word) => word.length >= 2 && !INTENT_WORDS.has(word.toLowerCase()),
-  );
-  const candidates = placeWords.length > 0 ? placeWords : words;
-  return candidates.slice(0, 2).join(" ").toUpperCase();
-}
+import { beadLabel } from "@/lib/destination";
 
 export function BeadTitle({
   prompt,
@@ -51,7 +12,7 @@ export function BeadTitle({
   prompt: string;
   locked?: boolean;
 }) {
-  const word = destinationWord(prompt);
+  const word = beadLabel(prompt);
   const letters = word.split("");
   const beadCount = letters.filter((character) => /[A-Z]/.test(character)).length;
   const drag = useBoardDrag({ x: 5, y: 9 }, "scrapbook-board", "chrome");

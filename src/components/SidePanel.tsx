@@ -358,7 +358,7 @@ function HowToThread({ onReplyTyped }: { onReplyTyped?: () => void }) {
     const reduced = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
-    const timer = window.setTimeout(() => setStep(0), reduced ? 0 : 280);
+    const timer = window.setTimeout(() => setStep(0), reduced ? 0 : 80);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -383,6 +383,7 @@ function HowToThread({ onReplyTyped }: { onReplyTyped?: () => void }) {
           <TypewriterText
             text={reply.text}
             active={index === step}
+            speed="fast"
             onComplete={index === step ? handleTyped : undefined}
           />
         </p>

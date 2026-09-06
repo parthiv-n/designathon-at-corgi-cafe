@@ -50,6 +50,8 @@ export interface CanvasController {
   sendMessage: (prompt: string) => Promise<void>;
   /** Put a bank photo on the board, or take it off again. */
   togglePinned: (url: string) => void;
+  /** Cross a scrap off the page. */
+  removeCard: (id: string) => void;
   /** Drop a local file into the photo bank (paperclip button). */
   addToBank: (urls: string[]) => void;
   reset: () => void;
@@ -113,6 +115,7 @@ export function useCanvasController(
           // photos had been pinned to the page.
           setCanvasState({
             vibeSummary: board.vibeSummary,
+            destination: board.destination ?? '',
             colorPalette: board.colorPalette,
             activities: board.activities,
             photoBank: board.photoBank,
@@ -120,6 +123,7 @@ export function useCanvasController(
             backdropImage: board.backdropImage,
             post: board.post,
             pinned: [],
+            dismissed: [],
           });
           setStatus('');
         }
@@ -187,6 +191,16 @@ export function useCanvasController(
     [isPending, mutate],
   );
 
+  const removeCard = useCallback(
+    (id: string) => {
+      mutate((state) => {
+        if ((state.dismissed ?? []).includes(id)) return state;
+        return { ...state, dismissed: [...(state.dismissed ?? []), id] };
+      });
+    },
+    [mutate],
+  );
+
   const togglePinned = useCallback(
     (url: string) => {
       mutate(state => ({
@@ -233,6 +247,7 @@ export function useCanvasController(
     runInstagram,
     sendMessage,
     togglePinned,
+    removeCard,
     addToBank,
     reset,
   };
