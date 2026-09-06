@@ -4,21 +4,33 @@ import { z } from 'zod';
 // fall through on 503s. Gemini handles both photo analysis and the chat
 // director -- there is no OpenAI key in this project.
 
+/**
+ * A required string the model is still guided towards, but whose absence
+ * cannot fail the call.
+ *
+ * Gemini drops a field from one object in an array often enough to matter --
+ * an activity with a cost, a description and no `title` -- and a plain
+ * `z.string()` turns that single omission into a rejected tool call and an
+ * empty board. `.catch('')` degrades it to an empty string instead; the
+ * description and the "required" flag both survive into the JSON schema the
+ * model sees, so this costs nothing in output quality. Callers drop the
+ * entries that came back nameless via `usableActivities`.
+ */
+function guided(description: string) {
+  return z.string().catch('').describe(description);
+}
+
 /** A single stop on the board. One shape, reused by every tool. */
 export const activitySchema = z.object({
-  title: z.string().describe('Name of the place or activity'),
-  description: z
-    .string()
-    .describe('One sentence explaining why this fits the vibe'),
-  cost: z.string().describe('Rough price, e.g. "$$", "Free", "$15"'),
-  estimatedTransit: z
-    .string()
-    .describe('Travel time from the previous stop, e.g. "15m walk"'),
-  imageUrl: z
-    .string()
-    .describe(
-      'A short lowercase hyphenated fallback keyword describing the look of this place, e.g. "jazz-bar-dark". A keyword, never a URL. It is only used if no photo of the real place can be found.',
-    ),
+  title: guided('Name of the place or activity'),
+  description: guided('One sentence explaining why this fits the vibe'),
+  cost: guided('Rough price, e.g. "$$", "Free", "$15"'),
+  placeType: guided(
+    'A short category for this place, e.g. "cafe", "attraction", "hike", "restaurant", "bar", or "gallery". Never include travel time or transport.',
+  ),
+  imageUrl: guided(
+    'A short lowercase hyphenated fallback keyword describing the look of this place, e.g. "jazz-bar-dark". A keyword, never a URL. It is only used if no photo of the real place can be found.',
+  ),
 });
 
 /** Who took a photo, and where to link them. Required by Unsplash's guidelines. */
@@ -55,15 +67,20 @@ export const vibeBoardSchema = z.object({
     .describe(
       'A punchy 3-5 word description of the aesthetic, e.g. "Neon Cyberpunk Night"',
     ),
+  // `.length(3)` is left off both arrays on purpose. The prompt and these
+  // descriptions ask for three, but a model that returns two or four should
+  // give a slightly-off board rather than no board: normalizePalette pads the
+  // palette, and the layout has slots for extra stops. An exact-length rule
+  // here only converts a small miscount into a total failure.
   colorPalette: z
     .array(z.string())
-    .length(3)
+    .catch([])
     .describe(
       'Exactly three hex colour codes drawn from the photo, e.g. "#1a0b2e"',
     ),
   activities: z
     .array(activitySchema)
-    .length(3)
+    .catch([])
     .describe('Exactly three stops that match the vibe'),
 });
 
@@ -79,6 +96,61 @@ export interface PostDetails {
   altText?: string;
   /** Tagged place, when the post has one. */
   place?: string;
+  /**
+   * Photo URL -> the place the caption names for that frame, for posts whose
+   * caption is a numbered legend. See `parseCaptionLegend`.
+   */
+  photoLabels?: Record<string, string>;
+}
+
+/**
+ * Pulls a numbered legend out of a caption.
+ *
+ * Carousel posts very often caption themselves as an index rather than prose:
+ *
+ *     Japanese Greenery Collection.
+ *
+ *     1 Narai jyuku, Nagano
+ *     2 Otagi Nenbutsuji temple, Kyoto
+ *     3-4 Nagano
+ *
+ * That is the only place the name of each photo exists, so without this a
+ * twenty-frame carousel becomes twenty scraps labelled "pinned". Returns a
+ * 1-based index -> label map; a range covers every frame it spans.
+ *
+ * Accepts "1", "1.", "1)", "1:" and "1 -", and ranges written with a hyphen,
+ * en dash or em dash.
+ */
+export function parseCaptionLegend(
+  caption: string | undefined,
+): Record<number, string> {
+  if (!caption) return {};
+
+  const line =
+    /^\s*(\d{1,2})\s*(?:[-–—]\s*(\d{1,2}))?\s*[.):\-–—]?\s+(\S.*?)\s*$/;
+  const legend: Record<number, string> = {};
+  let matched = 0;
+
+  for (const raw of caption.split(/\r?\n/)) {
+    const found = raw.match(line);
+    if (!found) continue;
+
+    const label = found[3].replace(/\s*#[\wÀ-￿]+/g, '').trim();
+    // A line that was nothing but hashtags, or a bare number, names nothing.
+    if (label.length === 0) continue;
+
+    const from = Number(found[1]);
+    const to = found[2] ? Number(found[2]) : from;
+    // Backwards or absurd ranges are a misparse, not a legend.
+    if (to < from || to - from > 20) continue;
+
+    for (let i = from; i <= to; i += 1) legend[i] = label;
+    matched += 1;
+  }
+
+  // One numbered line is far more likely to be prose that opens with a figure
+  // ("2 days in Kyoto...") than an index of the carousel.
+  return matched >= 2 ? legend : {};
 }
 
 /**
@@ -88,6 +160,8 @@ export interface PostDetails {
 export type VibeBoardPayload = VibeBoardData & {
   photoBank: string[];
   post: PostDetails;
+  /** Wide destination photo, never one of the scrapbook cards. */
+  backdropImage?: string;
 };
 
 /** What the chat director mutates. */
@@ -101,6 +175,8 @@ export interface CanvasState {
   pinned: string[];
   /** The post's cover photo, pinned as the board's hero scrap. */
   originalImage?: string;
+  /** Destination wallpaper. Must not be a photo already taped to the page. */
+  backdropImage?: string;
   /** Caption, author and place, straight off the post. */
   post: PostDetails;
 }
@@ -127,13 +203,14 @@ export interface ChatMessage {
  */
 export type CanvasPatch =
   | { type: 'theme'; vibeSummary: string; colorPalette: string[] }
-  | { type: 'swap'; index: number; activity: Activity }
-  | { type: 'add'; activities: Activity[] }
+  | { type: 'swap'; index: number; activity: Activity; backdropImage?: string }
+  | { type: 'add'; activities: Activity[]; backdropImage?: string }
   | {
       type: 'board';
       vibeSummary: string;
       colorPalette: string[];
       activities: Activity[];
+      backdropImage?: string;
     };
 
 /** Instagram's photo CDNs. Anything else must not go through the proxy. */
@@ -194,16 +271,32 @@ export function looksLikeInstagramUrl(value: string): boolean {
 export function describePatch(patch: CanvasPatch): string {
   switch (patch.type) {
     case 'theme':
-      return `I shifted the ambient theme to "${patch.vibeSummary}" with the palette ${patch.colorPalette.join(', ')}.`;
+      return `Done — I gave your board a "${patch.vibeSummary}" feel.`;
     case 'swap':
-      return `I replaced card ${patch.index} with "${patch.activity.title}" (${patch.activity.cost}, ${patch.activity.estimatedTransit}).`;
+      return `Good call — I swapped in "${patch.activity.title}" (${patch.activity.cost}, ${patch.activity.placeType}).`;
     case 'add':
-      return `I added ${patch.activities.map(a => `"${a.title}"`).join(', ')} to the page.`;
+      return `Absolutely — I added ${patch.activities.map(a => `"${a.title}"`).join(', ')} to your page.`;
     case 'board':
-      return `I rebuilt the whole board as "${patch.vibeSummary}": ${patch.activities.map(a => a.title).join(', ')}.`;
+      return `Fresh start! I rebuilt your board with a "${patch.vibeSummary}" feel: ${patch.activities.map(a => a.title).join(', ')}.`;
     default:
-      return 'I updated the canvas.';
+      return 'All set — I updated your board.';
   }
+}
+
+/**
+ * Drops stops the model left nameless.
+ *
+ * The title is the one field a card cannot do without: it is the label on the
+ * scrap and the query that finds a photo of the place. `guided()` lets a
+ * missing one through as '' rather than failing the whole board, so this is
+ * where those entries actually get discarded.
+ */
+export function usableActivities<T extends { title: string }>(
+  activities: T[] | undefined,
+): T[] {
+  return (activities ?? []).filter(
+    activity => typeof activity?.title === 'string' && activity.title.trim() !== '',
+  );
 }
 
 /** Pads or trims to exactly three entries so the UI never gets a short array. */
@@ -234,7 +327,11 @@ export function applyCanvasPatch(
       }
       const activities = [...state.activities];
       activities[patch.index] = patch.activity;
-      return { ...state, activities };
+      return {
+        ...state,
+        activities,
+        backdropImage: patch.backdropImage ?? state.backdropImage,
+      };
     }
 
     case 'add': {
@@ -246,7 +343,11 @@ export function applyCanvasPatch(
         a => !existing.has(a.title.toLowerCase()),
       );
       if (fresh.length === 0) return state;
-      return { ...state, activities: [...state.activities, ...fresh] };
+      return {
+        ...state,
+        activities: [...state.activities, ...fresh],
+        backdropImage: patch.backdropImage ?? state.backdropImage,
+      };
     }
 
     case 'board':
@@ -259,6 +360,7 @@ export function applyCanvasPatch(
         colorPalette: normalizePalette(patch.colorPalette, state.colorPalette),
         activities:
           patch.activities?.length > 0 ? patch.activities : state.activities,
+        backdropImage: patch.backdropImage ?? state.backdropImage,
       };
 
     default:
@@ -360,7 +462,7 @@ export const FALLBACK_VIBE_BOARD: VibeBoardData = {
       description:
         'Smoke, red lanterns and six-seat counters echo the alley in the photo.',
       cost: '$$',
-      estimatedTransit: '10m walk',
+      placeType: 'restaurant',
       imageUrl: 'tokyo-alley-lanterns',
     },
     {
@@ -368,14 +470,14 @@ export const FALLBACK_VIBE_BOARD: VibeBoardData = {
       description:
         'The screen glow gives you the same magenta-on-black contrast at scale.',
       cost: 'Free',
-      estimatedTransit: '12m train',
+      placeType: 'attraction',
       imageUrl: 'shibuya-crossing-night',
     },
     {
       title: 'Golden Gai Listening Bar',
       description: 'Low light and vinyl to land the night somewhere quieter.',
       cost: '$$',
-      estimatedTransit: '8m walk',
+      placeType: 'bar',
       imageUrl: 'jazz-bar-dark',
     },
   ],
@@ -387,6 +489,6 @@ export const FALLBACK_SWAP_ACTIVITY: Activity = {
   description:
     'Skewers and steam under paper lanterns keeps the neon mood without the cocktail bar tab.',
   cost: '$5',
-  estimatedTransit: '8m walk',
+  placeType: 'food market',
   imageUrl: 'street-food-night-market',
 };

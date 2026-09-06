@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { HandText } from "@/lib/handText";
 
 function prefersReducedMotion() {
@@ -11,15 +11,30 @@ export function TypewriterText({
   text,
   active,
   persistCaret = false,
+  caretAt = "end",
   className,
+  onComplete,
 }: {
   text: string;
   active: boolean;
   persistCaret?: boolean;
+  caretAt?: "start" | "end";
   className?: string;
+  onComplete?: () => void;
 }) {
   const [shown, setShown] = useState("");
+  const announced = useRef(false);
   const done = shown.length >= text.length && text.length > 0;
+
+  useEffect(() => {
+    announced.current = false;
+  }, [text, active]);
+
+  useEffect(() => {
+    if (!done || !onComplete || announced.current) return;
+    announced.current = true;
+    onComplete();
+  }, [done, onComplete]);
 
   useEffect(() => {
     if (!active || !text) return;
@@ -49,12 +64,16 @@ export function TypewriterText({
     return () => window.clearTimeout(timer);
   }, [text, active]);
 
+  const caret =
+    active && (!done || persistCaret) ? (
+      <span className="type-caret" aria-hidden />
+    ) : null;
+
   return (
     <span className={className}>
+      {caretAt === "start" ? caret : null}
       <HandText text={shown} />
-      {active && (!done || persistCaret) ? (
-        <span className="type-caret" aria-hidden />
-      ) : null}
+      {caretAt === "end" ? caret : null}
     </span>
   );
 }

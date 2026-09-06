@@ -8,7 +8,6 @@ import { StampControls } from "@/components/StampControls";
 import { HandText } from "@/lib/handText";
 import { useBoardDrag } from "@/hooks/useBoardDrag";
 import { useResize } from "@/hooks/useResize";
-import { unsplashUrlFor } from "@/lib/vibeBoard";
 
 function nextRotation() {
   return -8 + Math.random() * 18;
@@ -44,8 +43,8 @@ export function PhotoCard({
   const current = pool[variant % pool.length];
 
   // Only the card's own photo carries the credit. Rejecting deals a bank photo
-  // onto it, and `failed` swaps in the curated set -- neither is this
-  // photographer's work.
+  // onto it, so neither a bank photo nor a failed request should show this
+  // photographer's credit.
   const showCredit = card.credit && variant === 0 && !failed;
 
   useEffect(() => {
@@ -109,24 +108,24 @@ export function PhotoCard({
         }}
       >
         <span className={`photo-face photo-front cut-${cut}`}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            key={current.src}
-            src={failed ? unsplashUrlFor(card.id) : current.src}
-            alt=""
-            title={
-              showCredit
-                ? `Photo by ${card.credit!.name} on Unsplash`
-                : undefined
-            }
-            width={size.width}
-            height={Math.round(size.width * 1.28)}
-            draggable={false}
-            // Instagram CDN URLs are signed and sometimes 403 from the browser.
-            // A stand-in photo keeps the page whole rather than tearing a hole
-            // in it mid-demo.
-            onError={() => setFailed(true)}
-          />
+          {failed ? null : (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              key={current.src}
+              src={current.src}
+              alt=""
+              title={
+                showCredit
+                  ? `Photo by ${card.credit!.name} on Unsplash`
+                  : undefined
+              }
+              width={size.width}
+              height={Math.round(size.width * 1.28)}
+              draggable={false}
+              // Do not replace a failed request with unrelated stock imagery.
+              onError={() => setFailed(true)}
+            />
+          )}
         </span>
         <span className={`photo-face photo-back cut-${cut}`}>
           <span className="photo-back-paper" />

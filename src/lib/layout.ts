@@ -5,7 +5,7 @@ import type {
   ScrapCard,
 } from "@/data/cards";
 import type { CanvasState, PhotoCredit } from "@/lib/vibeBoard";
-import { displayPhotoUrl, unsplashUrlFor } from "@/lib/vibeBoard";
+import { displayPhotoUrl } from "@/lib/vibeBoard";
 
 /**
  * Where scraps land on the page.
@@ -227,13 +227,16 @@ function bankAlts(
   bank: string[],
   exclude: string | undefined,
   location: string,
+  labels: Record<string, string> = {},
 ): PhotoAlt[] {
   return bank
     .filter((src) => src !== exclude)
     .map((src) => ({
       src: displayPhotoUrl(src),
-      alt: "A photo from the post",
-      location,
+      // When the caption numbered its frames, each one is a named place rather
+      // than "another photo", so say which.
+      alt: labels[src] ?? "A photo from the post",
+      location: labels[src]?.toLowerCase() ?? location,
     }));
 }
 
@@ -316,6 +319,8 @@ function photoCard(
 export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
   const { activities, photoBank, pinned, colorPalette, originalImage, post } =
     canvas;
+  // Set only when the post's caption was a numbered legend of its frames.
+  const photoLabels = post.photoLabels ?? {};
 
   if (activities.length === 0 && !originalImage) return [];
 
@@ -327,11 +332,23 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
         "hero",
         HERO_SLOT,
         originalImage,
-        post.altText ?? "The photo this page came from",
-        "straight off the post",
-        bankAlts(photoBank, originalImage, "another frame from the post"),
+        photoLabels[originalImage] ??
+          post.altText ??
+          "The photo this page came from",
+        photoLabels[originalImage]?.toLowerCase() ?? "straight off the post",
+        bankAlts(
+          photoBank,
+          originalImage,
+          "another frame from the post",
+          photoLabels,
+        ),
         {
-          label: post.place ?? "from the post",
+          // The caption's own name for this frame beats the tagged location,
+          // which is often the whole country.
+          label:
+            photoLabels[originalImage]?.toLowerCase() ??
+            post.place ??
+            "from the post",
           sublabel: post.author ? `@${post.author}` : undefined,
         },
         0,
@@ -344,9 +361,13 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
   // good slots. Anything past that came from the chat ("add some food options")
   // and fills the spare slots, drifting off them once those run out.
   activities.forEach((activity, index) => {
-    // A real photo of the place when Unsplash or Commons had one, else the
-    // curated set. `resolvedCredit` is set only on the Unsplash path.
-    const src = activity.resolvedImage ?? unsplashUrlFor(activity.imageUrl);
+    // Only render a photo card when search found this specific place. The
+    // activity's note still renders below when neither source has a relevant
+    // result, without filling the gap with unrelated stock travel imagery.
+    const src = activity.resolvedImage;
+    if (!src) return;
+
+    // `resolvedCredit` is set only on the Unsplash path.
     const isExtra = index >= ACTIVITY_SLOTS.length;
     const extraIndex = index - ACTIVITY_SLOTS.length;
 
@@ -358,11 +379,11 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
           : ACTIVITY_SLOTS[index],
         src,
         activity.title,
-        `${activity.title.toLowerCase()} — ${activity.cost}, ${activity.estimatedTransit}`,
+        `${activity.title.toLowerCase()} — ${activity.cost}, ${activity.placeType}`,
         bankAlts(photoBank, src, activity.title.toLowerCase()),
         {
           label: activity.title.toLowerCase(),
-          sublabel: `${activity.cost} · ${activity.estimatedTransit}`,
+          sublabel: `${activity.cost} · ${activity.placeType}`,
           credit: activity.resolvedCredit,
         },
         isExtra ? Math.floor(extraIndex / PINNED_SLOTS.length) : 0,
@@ -381,19 +402,19 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
         `pin-${slug(src.slice(-24))}`,
         PINNED_SLOTS[seat % PINNED_SLOTS.length],
         src,
-        "A photo you pinned from the bank",
-        "pinned from the bank",
-        bankAlts(photoBank, src, "another frame from the post"),
-        { label: "pinned" },
+        photoLabels[src] ?? "A photo you pinned from the bank",
+        photoLabels[src]?.toLowerCase() ?? "pinned from the bank",
+        bankAlts(photoBank, src, "another frame from the post", photoLabels),
+        { label: photoLabels[src]?.toLowerCase() ?? "pinned" },
         Math.floor(seat / PINNED_SLOTS.length),
         compact,
       ),
     );
   });
 
-  // Only the original three get a full handwritten note. Past that the sticky
-  // label carries the name, and more handwriting would bury the page.
-  activities.slice(0, NOTE_SLOTS.length).forEach((activity, index) => {
+  // Keep generated boards image-led: one handwritten note summarizes the first
+  // stop, while every other activity uses its photo's compact sticky label.
+  activities.slice(0, 1).forEach((activity, index) => {
     const slot = NOTE_SLOTS[index];
 
     const at = fit(slot.x, slot.y, compact);
@@ -412,8 +433,8 @@ export function buildCards(canvas: CanvasState, compact = false): ScrapCard[] {
       ink: colorPalette[index % colorPalette.length],
       decors: slot.decors,
       alts: [
-        `${activity.title.toLowerCase()} — ${activity.cost.toLowerCase()}, ${activity.estimatedTransit.toLowerCase()}`,
-        `${activity.estimatedTransit.toLowerCase()} from the last stop. worth it.`,
+        `${activity.title.toLowerCase()} — ${activity.cost.toLowerCase()}, ${activity.placeType.toLowerCase()}`,
+        `${activity.placeType.toLowerCase()} — worth a stop.`,
       ],
     });
   });

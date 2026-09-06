@@ -51,6 +51,7 @@ export function isCapacityError(error: unknown): boolean {
     message.includes('unavailable') ||
     message.includes('overloaded') ||
     message.includes('rate limit') ||
+    message.includes('quota') ||
     message.includes('does not have permission') ||
     message.includes('no longer available')
   );

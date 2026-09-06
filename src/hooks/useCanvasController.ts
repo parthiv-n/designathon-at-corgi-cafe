@@ -12,6 +12,25 @@ import {
   type ChatMessage,
 } from '../lib/vibeBoard';
 
+function friendlyError(cause: unknown, fallback: string): string {
+  const message = cause instanceof Error ? cause.message : '';
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes('failed to fetch') ||
+    lower.includes('destination stream closed') ||
+    lower.includes('already closed')
+  ) {
+    return 'The director got cut off. Try sending that again in a moment.';
+  }
+
+  if (lower.includes('quota') || lower.includes('rate limit')) {
+    return 'The director is a bit swamped right now. Try again in a minute.';
+  }
+
+  return message || fallback;
+}
+
 export interface CanvasController {
   /** The live board. Drive every visual off this. */
   canvasState: CanvasState;
@@ -98,6 +117,7 @@ export function useCanvasController(
             activities: board.activities,
             photoBank: board.photoBank,
             originalImage: board.originalImage,
+            backdropImage: board.backdropImage,
             post: board.post,
             pinned: [],
           });
@@ -108,14 +128,12 @@ export function useCanvasController(
         // so start the transcript from the scrape.
         const opener: ChatMessage = {
           role: 'assistant',
-          content: `I built the page from that Instagram post: "${canvasRef.current.vibeSummary}".`,
+          content: `Your board is ready! I turned that Instagram post into a "${canvasRef.current.vibeSummary}" page.`,
         };
         messagesRef.current = [opener];
         setMessages([opener]);
       } catch (cause) {
-        setError(
-          cause instanceof Error ? cause.message : 'Could not read that post',
-        );
+        setError(friendlyError(cause, 'Could not read that post'));
         setStatus('');
       } finally {
         setIsPending(false);
@@ -160,9 +178,7 @@ export function useCanvasController(
           setMessages(messagesRef.current);
         }
       } catch (cause) {
-        setError(
-          cause instanceof Error ? cause.message : 'Could not reach the director',
-        );
+        setError(friendlyError(cause, 'Could not reach the director'));
       } finally {
         setStatus('');
         setIsPending(false);

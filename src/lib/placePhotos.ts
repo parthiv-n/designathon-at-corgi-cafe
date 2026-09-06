@@ -1,9 +1,8 @@
-import { searchUnsplashPhoto } from './unsplash';
-import type { PhotoCredit } from './vibeBoard';
-import { unsplashUrlFor } from './vibeBoard';
+import { photoIdentity, searchUnsplashPhoto } from './unsplash';
+import type { Activity, PhotoCredit } from './vibeBoard';
 
 /**
- * Finds a real photo of a real place. Three sources, first hit wins.
+ * Finds a real photo of a real place. Two sources, first hit wins.
  *
  * 1. Unsplash search. The director is told to name actual places, and Unsplash
  *    is strong on them -- "Omoide Yokocho" returns the red lanterns in that
@@ -11,11 +10,8 @@ import { unsplashUrlFor } from './vibeBoard';
  *    whole subject is a vibe.
  * 2. Wikimedia Commons. No key, and better than Unsplash on the long tail of
  *    named landmarks: obscure state parks, small museums, minor monuments.
- * 3. The curated set in `unsplashUrlFor`. Unrelated to the place, but it always
- *    loads, which is the only thing that matters once the searches are spent.
- *
- * Tier 3 used to be tier 1, which is how a Tokyo alley ended up standing in for
- * a brewery in the Finger Lakes.
+ * If neither source finds the place, no image is returned. Showing fewer
+ * photos is preferable to presenting unrelated travel imagery as a match.
  */
 
 /** A photo plus, when Unsplash found it, the photographer we owe a credit. */
@@ -48,7 +44,18 @@ interface CommonsPage {
   index?: number;
 }
 
-async function searchCommons(query: string): Promise<string | null> {
+function usedIdentities(srcs: Array<string | undefined>): Set<string> {
+  const ids = new Set<string>();
+  for (const src of srcs) {
+    if (src) ids.add(photoIdentity(src));
+  }
+  return ids;
+}
+
+async function searchCommons(
+  query: string,
+  exclude?: Set<string>,
+): Promise<string | null> {
   const endpoint = new URL(COMMONS_ENDPOINT);
   endpoint.search = new URLSearchParams({
     action: 'query',
@@ -90,6 +97,7 @@ async function searchCommons(query: string): Promise<string | null> {
     // SVGs on Commons are almost always diagrams or logos.
     if (info?.mime === 'image/svg+xml') continue;
     if (page.title && REJECTED_TITLE.test(page.title)) continue;
+    if (exclude?.has(photoIdentity(url))) continue;
 
     return url;
   }
@@ -98,20 +106,18 @@ async function searchCommons(query: string): Promise<string | null> {
 }
 
 /**
- * Best photo for one place, or the curated fallback. Never throws -- a card
- * with a slightly-off photo beats a card with a hole in it.
+ * Best photo for one place, or null when no relevant result exists. Never
+ * throws: a missing card is preferable to an unrelated image.
  */
 export async function resolvePlaceImage(
   query: string,
-  fallbackKey: string,
-): Promise<ResolvedPhoto> {
+): Promise<ResolvedPhoto | null> {
   const key = query.trim().toLowerCase();
-  const fallback: ResolvedPhoto = { src: unsplashUrlFor(fallbackKey) };
 
-  if (!key) return fallback;
+  if (!key) return null;
 
   const cached = cache.get(key);
-  if (cached !== undefined) return cached ?? fallback;
+  if (cached !== undefined) return cached;
 
   // Each source gets its own try. One in a shared block would mean an Unsplash
   // timeout skipped Commons entirely, which is the opposite of a fallback.
@@ -145,7 +151,7 @@ export async function resolvePlaceImage(
   // rate limit says nothing about the next attempt.
   if (!failed) cache.set(key, null);
 
-  return fallback;
+  return null;
 }
 
 /**
@@ -160,13 +166,93 @@ export async function withPlacePhotos<
 ): Promise<(T & { resolvedImage?: string; resolvedCredit?: PhotoCredit })[]> {
   return Promise.all(
     activities.map(async activity => {
-      const photo = await resolvePlaceImage(activity.title, activity.imageUrl);
+      const photo = await resolvePlaceImage(activity.title);
 
       return {
         ...activity,
-        resolvedImage: photo.src,
-        resolvedCredit: photo.credit,
+        ...(photo
+          ? {
+              resolvedImage: photo.src,
+              resolvedCredit: photo.credit,
+            }
+          : {}),
       };
     }),
+  );
+}
+
+/** Search term for a wide scene of the destination, not a specific stop. */
+export function backdropQuery(
+  vibeSummary: string,
+  place?: string,
+  titles: string[] = [],
+): string {
+  if (place?.trim()) return `${place.trim()} skyline`;
+  if (vibeSummary.trim()) return `${vibeSummary.trim()} landscape`;
+  const named = titles.find(title => title.trim());
+  return named ? `${named.trim()} landscape` : '';
+}
+
+/**
+ * A destination-wide photo that is not already on a card, in the bank, or
+ * pinned. Returns null rather than recycling a scrapbook image.
+ */
+export async function resolveBackdropImage(
+  query: string,
+  excludeSrcs: Array<string | undefined>,
+): Promise<string | null> {
+  const key = query.trim();
+  if (!key) return null;
+
+  const exclude = usedIdentities(excludeSrcs);
+
+  try {
+    const found = await searchUnsplashPhoto(key, {
+      exclude,
+      orientation: 'landscape',
+    });
+    if (found) return found.src;
+  } catch (error) {
+    console.warn('[placePhotos] Unsplash backdrop lookup failed for', key, error);
+  }
+
+  try {
+    const found = await searchCommons(key, exclude);
+    if (found) return found;
+  } catch (error) {
+    console.warn('[placePhotos] Commons backdrop lookup failed for', key, error);
+  }
+
+  return null;
+}
+
+export function boardImageSrcs(
+  activities: Array<{ resolvedImage?: string }>,
+  extras: Array<string | undefined> = [],
+): Array<string | undefined> {
+  return [...activities.map(activity => activity.resolvedImage), ...extras];
+}
+
+export async function backdropForBoard(
+  vibeSummary: string,
+  activities: Activity[],
+  extras: Array<string | undefined> = [],
+  place?: string,
+  currentBackdrop?: string,
+): Promise<string | undefined> {
+  const used = boardImageSrcs(activities, extras);
+  if (currentBackdrop && !usedIdentities(used).has(photoIdentity(currentBackdrop))) {
+    return currentBackdrop;
+  }
+
+  return (
+    (await resolveBackdropImage(
+      backdropQuery(
+        vibeSummary,
+        place,
+        activities.map(activity => activity.title),
+      ),
+      used,
+    )) ?? undefined
   );
 }

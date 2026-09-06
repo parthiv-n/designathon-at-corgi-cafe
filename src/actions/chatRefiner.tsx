@@ -9,10 +9,11 @@ import {
 import { z } from 'zod';
 
 import { withModelFallback } from '../lib/modelChain';
-import { withPlacePhotos } from '../lib/placePhotos';
+import { backdropForBoard, withPlacePhotos } from '../lib/placePhotos';
 import {
   FALLBACK_SWAP_ACTIVITY,
   activitySchema,
+  usableActivities,
   normalizePalette,
   type CanvasPatch,
   type CanvasState,
@@ -22,7 +23,7 @@ import {
 /** Safety net: if no tool and no text ever lands, do not leave the client hanging. */
 const PATCH_CHANNEL_TIMEOUT_MS = 45_000;
 
-const DIRECTOR_PROMPT = `You are an aesthetic travel art director and live canvas controller. You do not just give advice in text; you curate and modify the user's live UI canvas. When a user asks for a change in budget, weather, vibe, or logistics, confirm your artistic decision briefly in text, and ALWAYS invoke the relevant tool to mutate the visual canvas.`;
+const DIRECTOR_PROMPT = `You are a warm, approachable travel art director and live canvas controller. Write like a thoughtful friend helping plan a great day: upbeat, conversational, and concise. Acknowledge what the user wants, then clearly say what you changed. Avoid stiff system language, forced jokes, excessive exclamation marks, and emoji. You do not just give advice in text; you curate and modify the user's live UI canvas. When a user asks for a change in budget, weather, vibe, or logistics, confirm your artistic decision briefly in text, and ALWAYS invoke the relevant tool to mutate the visual canvas.`;
 
 /**
  * streamUI supports neither parallel nor multi-step tool calls, so the model
@@ -41,6 +42,10 @@ are working in -- name the actual bar, trailhead or bakery, never a category.
 Naming the real place matters twice over: it is what the label on the card says,
 and it is what gets searched for a photo of that actual place. "Rooster Fish
 Brewing" finds a photo; "a cosy brewery" does not.
+
+activities[].placeType is the short category printed under the place name:
+"cafe", "attraction", "hike", "restaurant", "bar", or "gallery". Never use
+travel time or transport there.
 
 activities[].imageUrl is only the fallback -- a lowercase hyphenated keyword for
 the look of the place (e.g. "jazz-bar-dark"), never a URL.`;
@@ -71,7 +76,7 @@ activities:
 ${state.activities
   .map(
     (activity, i) =>
-      `  [${i}] ${activity.title} -- ${activity.cost}, ${activity.estimatedTransit}. ${activity.description}`,
+      `  [${i}] ${activity.title} -- ${activity.cost}, ${activity.placeType}. ${activity.description}`,
   )
   .join('\n')}
 
@@ -98,13 +103,37 @@ export async function refineCanvasState(
   // .done() throws if called twice, and every exit path wants to close the
   // channel, so all of them funnel through here.
   let closed = false;
+  // Whether the client actually received a mutation. A closed channel that
+  // never carried one is a silent failure, and the catch below has to know.
+  let emitted = false;
+  let failSafe: ReturnType<typeof setTimeout>;
+
   const closePatch = () => {
     if (closed) return;
     closed = true;
     clearTimeout(failSafe);
     patchStream.done();
   };
-  const failSafe = setTimeout(closePatch, PATCH_CHANNEL_TIMEOUT_MS);
+
+  /** Every mutation goes through here so `emitted` cannot drift out of date. */
+  const emit = (patch: CanvasPatch) => {
+    patchStream.update(patch);
+    emitted = true;
+  };
+
+  /**
+   * Guards against a model that opens a stream and then hangs.
+   *
+   * Re-armed per attempt rather than set once for the whole call: a congested
+   * model can take over a minute to give up, so a single timer spanning a
+   * five-model chain fires while the chain is still legitimately working --
+   * which closes the channel and strands every model after it.
+   */
+  const armFailSafe = () => {
+    clearTimeout(failSafe);
+    failSafe = setTimeout(closePatch, PATCH_CHANNEL_TIMEOUT_MS);
+  };
+  armFailSafe();
 
   try {
     const result = await withModelFallback(
@@ -116,12 +145,16 @@ export async function refineCanvasState(
           throw new Error('Patch channel already closed; not retrying.');
         }
 
+        armFailSafe();
+
         return streamUI({
           model,
           instructions: `${DIRECTOR_PROMPT}\n\n${describeCanvas(currentCanvasState)}`,
           messages,
-          // Fail over to the next model rather than hammering a congested one.
-          maxRetries: 1,
+          // Do not retry the same model. A free-tier quota error includes a
+          // 30s+ Retry-After; waiting it out closes the RSC stream and the
+          // browser reports "Failed to fetch". Skip to the next model instead.
+          maxRetries: 0,
 
           // Reached when the model talks without calling a tool. Nothing to patch.
           text: ({ content, done }) => {
@@ -143,15 +176,41 @@ export async function refineCanvasState(
                   ),
               }),
               generate: async function* ({ spots }) {
-                yield <p>pinning up {spots.length} more...</p>;
+                yield <p>Absolutely — finding {spots.length} more for you...</p>;
 
-                const withPhotos = await withPlacePhotos(spots);
-                patchStream.update({ type: 'add', activities: withPhotos });
+                const withPhotos = await withPlacePhotos(
+                  usableActivities(spots),
+                );
+                const nextActivities = [
+                  ...currentCanvasState.activities,
+                  ...withPhotos,
+                ];
+                emit({
+                  type: 'add',
+                  activities: withPhotos,
+                  backdropImage: await backdropForBoard(
+                    currentCanvasState.vibeSummary,
+                    nextActivities,
+                    [
+                      currentCanvasState.originalImage,
+                      ...currentCanvasState.photoBank,
+                      ...currentCanvasState.pinned,
+                    ],
+                    currentCanvasState.post.place,
+                    currentCanvasState.backdropImage,
+                  ),
+                });
                 closePatch();
 
+                // Name what actually landed, not what the model proposed: a
+                // nameless spot was dropped and claiming it would be a lie.
                 return (
                   <p>
-                    added {spots.map(spot => spot.title).join(', ').toLowerCase()}.
+                    {withPhotos.length > 0
+                      ? `All set — I added ${withPhotos
+                          .map(spot => spot.title)
+                          .join(', ')}.`
+                      : "I couldn't find a solid match this time. Try asking me another way."}
                   </p>
                 );
               },
@@ -170,7 +229,7 @@ export async function refineCanvasState(
                   .describe('A punchy three word title for the new aesthetic'),
               }),
               generate: async ({ newPalette, vibeSummary }) => {
-                patchStream.update({
+                emit({
                   type: 'theme',
                   vibeSummary,
                   colorPalette: normalizePalette(
@@ -180,7 +239,7 @@ export async function refineCanvasState(
                 });
                 closePatch();
 
-                return <p>Ambient theme shifted to {vibeSummary}.</p>;
+                return <p>Done — I gave the board a {vibeSummary} feel.</p>;
               },
             },
 
@@ -201,13 +260,33 @@ export async function refineCanvasState(
                 targetActivityIndex,
                 newActivity,
               }) {
-                yield <p>reworking card {targetActivityIndex + 1}...</p>;
+                yield <p>Good call — I’m finding a better fit...</p>;
 
-                const [withPhoto] = await withPlacePhotos([newActivity]);
-                patchStream.update({
+                const [withPhoto] = await withPlacePhotos(
+                  usableActivities([newActivity]),
+                );
+                const nextActivities = [...currentCanvasState.activities];
+                if (
+                  targetActivityIndex >= 0 &&
+                  targetActivityIndex < nextActivities.length
+                ) {
+                  nextActivities[targetActivityIndex] = withPhoto;
+                }
+                emit({
                   type: 'swap',
                   index: targetActivityIndex,
                   activity: withPhoto,
+                  backdropImage: await backdropForBoard(
+                    currentCanvasState.vibeSummary,
+                    nextActivities,
+                    [
+                      currentCanvasState.originalImage,
+                      ...currentCanvasState.photoBank,
+                      ...currentCanvasState.pinned,
+                    ],
+                    currentCanvasState.post.place,
+                    currentCanvasState.backdropImage,
+                  ),
                 });
                 closePatch();
 
@@ -215,8 +294,8 @@ export async function refineCanvasState(
                 // is just the slip that says what happened.
                 return (
                   <p>
-                    card {targetActivityIndex + 1} is now {newActivity.title} (
-                    {newActivity.cost}).
+                    Much better — card {targetActivityIndex + 1} is now{" "}
+                    {newActivity.title} ({newActivity.cost}).
                   </p>
                 );
               },
@@ -247,22 +326,35 @@ export async function refineCanvasState(
                 colorPalette,
                 activities,
               }) {
-                yield <p>rebuilding the whole page...</p>;
+                yield <p>Got it — I’m giving the whole page a fresh direction...</p>;
 
                 const palette = normalizePalette(
                   colorPalette,
                   currentCanvasState.colorPalette,
                 );
 
-                patchStream.update({
+                const withPhotos = await withPlacePhotos(
+                  usableActivities(activities),
+                );
+                emit({
                   type: 'board',
                   vibeSummary: newVibeSummary,
                   colorPalette: palette,
-                  activities: await withPlacePhotos(activities),
+                  activities: withPhotos,
+                  backdropImage: await backdropForBoard(
+                    newVibeSummary,
+                    withPhotos,
+                    [
+                      currentCanvasState.originalImage,
+                      ...currentCanvasState.photoBank,
+                      ...currentCanvasState.pinned,
+                    ],
+                    currentCanvasState.post.place,
+                  ),
                 });
                 closePatch();
 
-                return <p>{newVibeSummary.toLowerCase()}</p>;
+                return <p>Here you go — a fresh {newVibeSummary} board.</p>;
               },
             },
           },
@@ -293,10 +385,27 @@ export async function refineCanvasState(
         activity: FALLBACK_SWAP_ACTIVITY,
       });
       closePatch();
+
+      return {
+        ui: <p>I hit a small snag, but I still found you a cheaper first stop.</p>,
+        patch: patchStream.value,
+      };
     }
 
+    // The channel shut before anything reached the client -- the fail-safe
+    // fired, or a tool closed it and a later model then threw. There is no way
+    // left to mutate the board, so returning the reassuring fallback copy would
+    // claim a change that never happened and the turn would look like it simply
+    // did nothing. Throw instead, so useCanvasController surfaces it.
+    if (!emitted) {
+      throw new Error(
+        'The director is a bit swamped right now. Try again in a minute.',
+      );
+    }
+
+    // A patch did land before the failure; the board already moved.
     return {
-      ui: <p>swapped the first stop for something cheaper.</p>,
+      ui: <p>That took a couple of tries, but your page is ready.</p>,
       patch: patchStream.value,
     };
   }

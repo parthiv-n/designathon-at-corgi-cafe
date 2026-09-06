@@ -19,6 +19,7 @@ const LOOKUP_TIMEOUT_MS = 6_000;
  * top result occasionally has no usable `urls.regular`.
  */
 const CANDIDATES = 5;
+const BACKDROP_CANDIDATES = 10;
 
 /** Photos of places do not change; a day of reuse also protects the rate limit. */
 const REVALIDATE_SECONDS = 86_400;
@@ -38,6 +39,21 @@ interface UnsplashSearchResponse {
     links?: { download_location?: string };
     user?: { name?: string; links?: { html?: string } };
   }[];
+}
+
+/**
+ * Stable id for "is this the same photograph?" Crop and size query params
+ * change between card and backdrop URLs, so those must not count as different.
+ */
+export function photoIdentity(src: string): string {
+  try {
+    const url = new URL(src);
+    const unsplash = url.pathname.match(/photo-[\w-]+/i);
+    if (unsplash) return `unsplash:${unsplash[0].toLowerCase()}`;
+    return `${url.hostname}${url.pathname}`.toLowerCase();
+  } catch {
+    return src.trim().toLowerCase();
+  }
 }
 
 function authHeaders(accessKey: string): HeadersInit {
@@ -75,6 +91,11 @@ function triggerDownload(downloadLocation: string, accessKey: string): void {
  */
 export async function searchUnsplashPhoto(
   query: string,
+  options: {
+    /** Skip photos already used on the scrapbook so a backdrop is never a card. */
+    exclude?: Set<string>;
+    orientation?: 'landscape' | 'portrait' | 'squarish';
+  } = {},
 ): Promise<UnsplashPhoto | null> {
   const accessKey = process.env.UNSPLASH_ACCESS_KEY;
   const trimmed = query.trim();
@@ -83,13 +104,16 @@ export async function searchUnsplashPhoto(
   // Commons and the curated set behind it.
   if (!accessKey || !trimmed) return null;
 
-  const endpoint = new URL(SEARCH_ENDPOINT);
-  endpoint.search = new URLSearchParams({
+  const params = new URLSearchParams({
     query: trimmed,
-    per_page: String(CANDIDATES),
+    per_page: String(options.exclude?.size ? BACKDROP_CANDIDATES : CANDIDATES),
     // The board is built from someone's holiday photo; keep it safe for a demo.
     content_filter: 'high',
-  }).toString();
+  });
+  if (options.orientation) params.set('orientation', options.orientation);
+
+  const endpoint = new URL(SEARCH_ENDPOINT);
+  endpoint.search = params.toString();
 
   const response = await fetch(endpoint, {
     headers: authHeaders(accessKey),
@@ -113,9 +137,11 @@ export async function searchUnsplashPhoto(
 
   const json = (await response.json()) as UnsplashSearchResponse;
 
-  const photo = json.results?.find(
-    result => typeof result?.urls?.regular === 'string',
-  );
+  const photo = json.results?.find(result => {
+    if (typeof result?.urls?.regular !== 'string') return false;
+    if (!options.exclude?.size) return true;
+    return !options.exclude.has(photoIdentity(result.urls.regular));
+  });
 
   if (!photo?.urls?.regular) return null;
 

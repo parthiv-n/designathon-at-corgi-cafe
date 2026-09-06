@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { TypewriterText } from "@/components/TypewriterText";
+import {
+  HOW_TO_PROMPT,
+  HOW_TO_REPLIES,
+  type SubmitOptions,
+} from "@/lib/onboarding";
 import { displayPhotoUrl, type ChatMessage } from "@/lib/vibeBoard";
 
 type Tab = "chat" | "gallery";
@@ -27,10 +33,14 @@ export function SidePanel({
   active,
   photos,
   pinned,
+  labels,
   onClose,
   onSend,
   onToggle,
   onFilesPicked,
+  howTo = false,
+  onHowToTyped,
+  onboardingReady = false,
 }: {
   messages: ChatMessage[];
   error: string | null;
@@ -38,10 +48,15 @@ export function SidePanel({
   active: boolean;
   photos: string[];
   pinned: string[];
+  /** Photo URL -> the place the post's caption named for it. Often empty. */
+  labels: Record<string, string>;
   onClose: () => void;
-  onSend: (value: string) => void;
+  onSend: (value: string, options?: SubmitOptions) => void;
   onToggle: (url: string) => void;
   onFilesPicked: (urls: string[]) => void;
+  howTo?: boolean;
+  onHowToTyped?: () => void;
+  onboardingReady?: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("chat");
   const [value, setValue] = useState("");
@@ -65,12 +80,14 @@ export function SidePanel({
     const log = logRef.current;
     if (!log || tab !== "chat") return;
     log.scrollTop = log.scrollHeight;
-  }, [messages, error, tab]);
+  }, [messages, error, busy, tab, howTo]);
 
   useEffect(() => {
-    if (!active || tab !== "chat" || messages.length === 0) return;
+    if (!active || tab !== "chat") return;
+    if (howTo && !onboardingReady) return;
+    if (!howTo && messages.length === 0) return;
     inputRef.current?.focus();
-  }, [active, tab, messages.length]);
+  }, [active, tab, messages.length, howTo, onboardingReady]);
 
   function send() {
     const next = value.trim();
@@ -143,14 +160,46 @@ export function SidePanel({
           role="tabpanel"
           aria-labelledby="tab-chat"
         >
-          {messages.map((message, index) => (
-            <p
-              key={`${message.role}-${index}`}
-              className={`chat-bubble is-${message.role}`}
+          {howTo ? (
+            <HowToThread onReplyTyped={onHowToTyped} />
+          ) : (
+            messages.map((message, index) => (
+              <p
+                key={`${message.role}-${index}`}
+                className={`chat-bubble is-${message.role}`}
+              >
+                {message.content}
+              </p>
+            ))
+          )}
+          {busy && !howTo ? (
+            <div
+              className="chat-bubble is-assistant is-loading"
+              role="status"
+              aria-live="polite"
+              aria-label="The chatbot is working"
             >
-              {message.content}
-            </p>
-          ))}
+              <svg
+                className="chat-loading-icon"
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+                fill="none"
+                aria-hidden
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="8"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeDasharray="34 16"
+                />
+              </svg>
+              <span>thinking</span>
+            </div>
+          ) : null}
           {error ? (
             <p className="chat-bubble is-assistant is-error" role="alert">
               {error}
@@ -196,8 +245,8 @@ export function SidePanel({
                       aria-pressed={isPinned}
                       aria-label={
                         isPinned
-                          ? `Photo ${index + 1} of ${usable.length}. Pinned to the page. Click to take it off.`
-                          : `Photo ${index + 1} of ${usable.length}. Click to pin it to the page.`
+                          ? `${labels[src] ?? `Photo ${index + 1} of ${usable.length}`}. Pinned to the page. Click to take it off.`
+                          : `${labels[src] ?? `Photo ${index + 1} of ${usable.length}`}. Click to pin it to the page.`
                       }
                       onClick={() => onToggle(src)}
                     >
@@ -218,6 +267,9 @@ export function SidePanel({
                         </span>
                       ) : null}
                     </button>
+                    {labels[src] ? (
+                      <span className="photo-bank-caption">{labels[src]}</span>
+                    ) : null}
                   </li>
                 );
               })}
@@ -296,5 +348,45 @@ export function SidePanel({
         />
       </form>
     </aside>
+  );
+}
+
+function HowToThread({ onReplyTyped }: { onReplyTyped?: () => void }) {
+  const [step, setStep] = useState(-1);
+
+  useEffect(() => {
+    const reduced = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const timer = window.setTimeout(() => setStep(0), reduced ? 0 : 280);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const log = document.getElementById("panel-chat");
+    if (log) log.scrollTop = log.scrollHeight;
+  }, [step]);
+
+  function handleTyped() {
+    onReplyTyped?.();
+    setStep((current) => current + 1);
+  }
+
+  return (
+    <>
+      <p className="chat-bubble is-user">{HOW_TO_PROMPT}</p>
+      {HOW_TO_REPLIES.slice(0, step + 1).map((reply, index) => (
+        <p
+          key={reply.id}
+          className={`chat-bubble is-assistant${reply.cta ? " is-howto-cta" : ""}`}
+        >
+          <TypewriterText
+            text={reply.text}
+            active={index === step}
+            onComplete={index === step ? handleTyped : undefined}
+          />
+        </p>
+      ))}
+    </>
   );
 }

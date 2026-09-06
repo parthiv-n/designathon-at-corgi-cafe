@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { TypewriterText } from "@/components/TypewriterText";
+import { HOW_TO_PROMPT, type SubmitOptions } from "@/lib/onboarding";
 
-const VIBE_PLACEHOLDER = "paste an instagram link";
+const VIBE_PLACEHOLDER = "upload your inspo or write a prompt";
 
 /**
  * The intro bar, shown only until a board exists. After that the side panel's
@@ -15,18 +16,25 @@ export function PromptBar({
   error,
   onSubmit,
   onFilesPicked,
+  showHowTo = false,
+  onboardingReady = false,
 }: {
   busy: boolean;
   /** What the scrape is doing, written under the bar while it runs. */
   status: string;
   error: string | null;
-  onSubmit: (value: string) => void;
+  onSubmit: (value: string, options?: SubmitOptions) => void;
   onFilesPicked: (urls: string[]) => void;
+  /** Quiet how-to link. Hidden once the tutorial has started. */
+  showHowTo?: boolean;
+  /** Cards have finished writing — clear the demo query and focus. */
+  onboardingReady?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [attached, setAttached] = useState(0);
   const [typing, setTyping] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const objectUrls = useRef<string[]>([]);
   const empty = value.length === 0;
 
@@ -44,11 +52,28 @@ export function PromptBar({
     return () => urls.forEach((url) => URL.revokeObjectURL(url));
   }, []);
 
-  function submit() {
+  if (onboardingReady && value.length > 0) {
+    setValue("");
+  }
+
+  useEffect(() => {
+    if (!onboardingReady) return;
+    inputRef.current?.focus();
+  }, [onboardingReady]);
+
+  function submit(options?: SubmitOptions) {
     const next = value.trim();
     if (!next || busy) return;
-    onSubmit(next);
-    setValue("");
+    onSubmit(next, options);
+    if (!options?.isOnboarding) setValue("");
+  }
+
+  function startHowTo() {
+    if (busy || !showHowTo) return;
+    setValue(HOW_TO_PROMPT);
+    window.requestAnimationFrame(() => {
+      onSubmit(HOW_TO_PROMPT, { isOnboarding: true });
+    });
   }
 
   function handleSubmit(event: React.FormEvent) {
@@ -70,7 +95,7 @@ export function PromptBar({
     <>
       <form className="prompt-bar" onSubmit={handleSubmit}>
         <label className="sr-only" htmlFor="vibe-input">
-          Paste an Instagram link to build a page
+          Describe the trip vibe
         </label>
         <button
           type="button"
@@ -102,9 +127,11 @@ export function PromptBar({
               text={VIBE_PLACEHOLDER}
               active={typing}
               persistCaret={empty}
+              caretAt="start"
             />
           </span>
           <input
+            ref={inputRef}
             id="vibe-input"
             className={`prompt-input${empty ? " has-ghost" : ""}`}
             type="text"
@@ -127,7 +154,7 @@ export function PromptBar({
           type="submit"
           className={`prompt-send${value.trim() ? " is-ready" : ""}`}
           disabled={busy || !value.trim()}
-          aria-label="Build the page"
+          aria-label="Generate scrapbook"
         >
           <svg
             viewBox="0 0 24 24"
@@ -160,6 +187,18 @@ export function PromptBar({
        * otherwise report nowhere. This is the only status surface on the intro
        * screen.
        */}
+      {showHowTo ? (
+        <button
+          type="button"
+          className="prompt-howto"
+          aria-label="Show a short how-to in chat"
+          onClick={startHowTo}
+          disabled={busy}
+        >
+          first time? here&apos;s a how-to.
+        </button>
+      ) : null}
+
       <p className={`prompt-status${error ? " is-error" : ""}`} aria-live="polite">
         {error ?? status}
       </p>

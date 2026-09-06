@@ -8,9 +8,11 @@ import {
 } from '@ai-sdk/rsc';
 
 import { withModelFallback } from '../lib/modelChain';
-import { withPlacePhotos } from '../lib/placePhotos';
+import { backdropForBoard, withPlacePhotos } from '../lib/placePhotos';
 import {
   FALLBACK_VIBE_BOARD,
+  parseCaptionLegend,
+  usableActivities,
   MOCK_POST,
   normalizePalette,
   vibeBoardSchema,
@@ -27,8 +29,15 @@ const FETCH_TIMEOUT_MS = 15_000;
 /** Safety net: if no tool and no text ever lands, do not leave the client hanging. */
 const BOARD_CHANNEL_TIMEOUT_MS = 45_000;
 
-/** A carousel can run to ten frames; more than this is rail spam. */
-const MAX_BANK_PHOTOS = 12;
+/**
+ * Instagram caps a carousel at 20, so this takes all of them.
+ *
+ * It was 12 back when the bank was a narrow rail down the left edge and a long
+ * post overflowed it. The gallery is a scrolling grid in the side panel now,
+ * and truncating a 20-frame "collection" post silently dropped the back half
+ * of the very thing the caption was indexing.
+ */
+const MAX_BANK_PHOTOS = 20;
 
 /** Vision frames sent to the model. Three reads a carousel without the latency. */
 const MAX_VISION_FRAMES = 3;
@@ -54,6 +63,9 @@ Rules:
   pier walk"). The name is both the label printed on the card and the search
   that finds a photo of the actual place, so a description leaves the card
   with a stock photo of somewhere else entirely.
+- activities[].placeType must be a short category such as "cafe",
+  "attraction", "hike", "restaurant", "bar", or "gallery". Never put travel
+  time or transport in this field.
 - activities[].imageUrl is only a fallback: a lowercase hyphenated keyword for
   the look of the place (e.g. "jazz-bar-dark"), never a URL.`;
 
@@ -142,13 +154,15 @@ function at(source: unknown, path: string[]): unknown {
  * string, because the Instagram CDN appends per-request signed params and the
  * same frame otherwise lands in the rail two or three times.
  */
-function collectImages(json: unknown): string[] {
+function collectImages(json: unknown): CollectedImage[] {
   const seen = new Set<string>();
-  const urls: string[] = [];
+  const images: CollectedImage[] = [];
+  /** True once a carousel supplied frames, so the cover is already represented. */
+  let sawCarousel = false;
 
-  const push = (value: unknown) => {
+  const push = (value: unknown, frame?: number) => {
     if (typeof value !== 'string' || value.trim().length === 0) return;
-    if (urls.length >= MAX_BANK_PHOTOS) return;
+    if (images.length >= MAX_BANK_PHOTOS) return;
 
     let key: string;
     try {
@@ -161,11 +175,11 @@ function collectImages(json: unknown): string[] {
 
     if (seen.has(key)) return;
     seen.add(key);
-    urls.push(value);
+    images.push({ src: value, frame });
   };
 
-  const pushNode = (node: unknown) => {
-    for (const path of NODE_IMAGE_PATHS) push(at(node, path));
+  const pushNode = (node: unknown, frame?: number) => {
+    for (const path of NODE_IMAGE_PATHS) push(at(node, path), frame);
   };
 
   for (const root of MEDIA_ROOTS) {
@@ -180,24 +194,44 @@ function collectImages(json: unknown): string[] {
     // web GraphQL `edge_sidecar_to_children.edges[].node`, which is what this
     // provider actually returns. Missing the second one silently turns an
     // eleven-photo carousel into a bank of one.
+    //
+    // `frame` is the 1-based position in the post, which is what a numbered
+    // caption legend counts. It is deliberately not the index in `images`:
+    // MAX_BANK_PHOTOS truncates the tail and the dedupe can drop a repeated
+    // frame, and either would slide every later label onto the wrong photo.
     const carousel = record.carousel_media;
-    if (Array.isArray(carousel)) carousel.forEach(pushNode);
+    if (Array.isArray(carousel)) {
+      sawCarousel ||= carousel.length > 0;
+      carousel.forEach((child, index) => pushNode(child, index + 1));
+    }
 
     const sidecar = at(node, ['edge_sidecar_to_children', 'edges']);
     if (Array.isArray(sidecar)) {
-      for (const edge of sidecar) pushNode(at(edge, ['node']) ?? edge);
+      sawCarousel ||= sidecar.length > 0;
+      sidecar.forEach((edge, index) =>
+        pushNode(at(edge, ['node']) ?? edge, index + 1),
+      );
     }
 
-    pushNode(node);
+    // The root's own image. On a carousel that is the cover, already frame 1
+    // above and normally deduped away; on a single-image post it *is* frame 1.
+    pushNode(node, sawCarousel ? undefined : 1);
   }
 
-  return urls;
+  return images;
 }
 
 /**
  * What the post itself says, as opposed to what the model makes of it.
  * Everything here is optional -- posts routinely have no caption or no place.
  */
+/** One scraped frame, with the position in the post the caption legend counts. */
+interface CollectedImage {
+  src: string;
+  /** 1-based position in the post, or undefined when it could not be placed. */
+  frame?: number;
+}
+
 function collectPostDetails(json: unknown): PostDetails {
   const caption = firstString(json, [
     ['edge_media_to_caption', 'edges', '0', 'node', 'text'],
@@ -271,8 +305,21 @@ async function fetchInstagramPost(
 
     const json = await response.json();
 
-    const imageUrls = collectImages(json);
+    const images = collectImages(json);
     const details = collectPostDetails(json);
+    const imageUrls = images.map(image => image.src);
+
+    // Carousel posts routinely caption themselves as a numbered index of the
+    // places in them; that legend is the only name each frame has.
+    const legend = parseCaptionLegend(details.caption);
+    const photoLabels: Record<string, string> = {};
+    for (const { src, frame } of images) {
+      const label = frame === undefined ? undefined : legend[frame];
+      if (label) photoLabels[src] = label;
+    }
+    if (Object.keys(photoLabels).length > 0) {
+      details.photoLabels = photoLabels;
+    }
 
     if (imageUrls.length === 0) {
       // Logged so an unexpected payload shape can be mapped in one round trip
@@ -397,9 +444,8 @@ export async function processInstagramVibe(
         return streamUI({
           model,
           instructions: SYSTEM_PROMPT,
-          // One retry per model, then fail over. Retrying a congested model
-          // three times costs ~34s; switching models is near instant.
-          maxRetries: 1,
+          // Do not retry the same model. Quota waits close the RSC stream.
+          maxRetries: 0,
           messages: [
             {
               role: 'user',
@@ -430,14 +476,24 @@ export async function processInstagramVibe(
               generate: async function* (params) {
                 yield <p>reading the vibe...</p>;
 
+                const activities = await withPlacePhotos(
+                  usableActivities(params.activities),
+                );
+
                 boardStream.update({
                   ...params,
-                  activities: await withPlacePhotos(params.activities),
+                  activities,
                   // The model paraphrases URLs surprisingly often.
                   originalImage: post.imageUrls[0],
                   colorPalette: normalizePalette(params.colorPalette),
                   photoBank: post.imageUrls,
                   post: post.details,
+                  backdropImage: await backdropForBoard(
+                    params.vibeSummary,
+                    activities,
+                    [post.imageUrls[0], ...post.imageUrls],
+                    post.details.place,
+                  ),
                 });
                 closeBoard();
 
