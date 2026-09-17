@@ -200,7 +200,6 @@ body {
 }
 
 .scrapbook-board.is-contained .scrap-pin,
-.scrapbook-board.is-contained .ephemera-asset,
 .scrapbook-board.is-contained .page-title,
 .scrapbook-board.is-contained .bead-title {
   pointer-events: none;
@@ -316,6 +315,24 @@ body {
   gap: 10px;
   overflow: auto;
   padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.32) transparent;
+}
+
+.chat-log::-webkit-scrollbar {
+  width: 7px;
+  background: transparent;
+}
+
+.chat-log::-webkit-scrollbar-track,
+.chat-log::-webkit-scrollbar-track-piece,
+.chat-log::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.chat-log::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.32);
+  border-radius: 99px;
 }
 
 .chat-bubble {
@@ -352,6 +369,26 @@ body {
 .chat-loading-icon {
   flex: 0 0 auto;
   animation: chat-loading-spin 900ms linear infinite;
+}
+
+/*
+ * Each step is a fresh element (SidePanel keys the span on the label), so this
+ * runs once per change. Swapping the words outright reads as a glitch; easing
+ * them up reads as one step handing over to the next.
+ */
+.chat-loading-step {
+  animation: chat-step-in 320ms ease both;
+}
+
+@keyframes chat-step-in {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
 }
 
 @keyframes chat-loading-spin {
@@ -434,78 +471,49 @@ body {
   cursor: default;
 }
 
-/* --- Palette strip -------------------------------------------------- */
-
-.palette-strip {
-  position: absolute;
-  left: 28px;
-  top: 46%;
-  z-index: 40;
-  display: flex;
-  width: 72px;
-  translate: 0 -50%;
-  flex-direction: column;
-  align-items: center;
-  padding: 18px 8px 12px;
-  background: #d8c4a4;
-  box-shadow: none;
-}
-
-.palette-pin {
-  position: absolute;
-  top: 8px;
-  left: 50%;
-  width: 8px;
-  height: 8px;
-  translate: -50% 0;
-  border-radius: 50%;
-  background: #6b8f71;
-}
+/* --- Palette chips on the board ------------------------------------- */
 
 .palette-chips {
   display: flex;
-  width: 100%;
-  flex-direction: column;
-  gap: 7px;
   margin: 0;
-  padding: 10px 0 0;
+  padding: 12px 10px 10px;
   list-style: none;
+  flex-direction: column;
+  gap: 8px;
+  background: #f3ead8;
+  pointer-events: none;
 }
 
 .palette-chip {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #f4eee2;
-  box-shadow: none;
-  animation: chip-pin 620ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
 }
 
 .palette-chip:nth-child(odd) {
-  margin-right: 4px;
+  rotate: -1.1deg;
 }
 
 .palette-chip:nth-child(even) {
-  margin-left: 4px;
+  rotate: 1.4deg;
 }
 
 .palette-swatch {
   display: block;
-  height: 38px;
+  width: 100%;
+  height: 32px;
 }
 
 .palette-hex {
   display: block;
-  padding: 5px 2px 4px;
-  overflow: hidden;
+  padding: 3px 0 0;
   font-family: var(--font-product);
   font-size: 9px;
   font-weight: 400;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.04em;
   line-height: 1.15;
   text-align: center;
   color: var(--color-ink);
-  white-space: nowrap;
 }
 
 /* --- Title written on the page -------------------------------------- */
@@ -601,17 +609,22 @@ body {
 
 .scrap-pin.is-photo:hover,
 .scrap-pin.is-photo:focus-within {
-  z-index: 28;
+  z-index: 32;
 }
 
 .scrap-pin.is-note:hover,
 .scrap-pin.is-note:focus-within,
+.scrap-pin.is-palette:hover,
+.scrap-pin.is-palette:focus-within,
 .page-title:hover {
-  z-index: 58;
+  z-index: 70;
 }
 
+/* `is-resizing` covers rotating too: turning a scrap has to end the drop-in
+ * animation, or the keyframe's own transform keeps overriding the new angle. */
 .scrap-pin.is-placed,
-.scrap-pin.is-dragging {
+.scrap-pin.is-dragging,
+.scrap-pin.is-resizing {
   animation: none;
   transform: rotate(var(--rot));
 }
@@ -621,17 +634,12 @@ body {
   z-index: 80;
 }
 
-.scrap-pin.is-dragging .photo-card:hover {
-  transform: none;
-}
-
-.scrap-pin.is-dragging .photo-card.is-flipped:hover {
-  transform: rotateY(180deg);
+.scrap-pin.is-dragging .photo-card img {
+  translate: none;
 }
 
 .page-title.is-dragging,
-.paper-bulldog.is-dragging,
-.ephemera-asset.is-dragging {
+.paper-bulldog.is-dragging {
   cursor: grabbing;
 }
 
@@ -641,7 +649,6 @@ body {
   z-index: 50;
 }
 
-.photo-card,
 .note-card {
   position: relative;
   z-index: 1;
@@ -650,21 +657,29 @@ body {
   padding: 0;
   border: 0;
   cursor: pointer;
-  transform-style: preserve-3d;
   transition: transform 220ms ease;
   box-shadow: none;
 }
 
 .note-card {
-  container-type: inline-size;
+  /*
+   * No font-size here on purpose. NoteCard works one out from how much text
+   * there is and how big this particular sheet's clear area actually is -- a
+   * single `cqi` rule cannot serve both a wide lined card and a small torn
+   * scrap, and the old one overflowed both.
+   */
+  --note-top: 24%;
+  --note-left: 14%;
+  --note-right: 14%;
+  --note-bottom: 14%;
+
   cursor: default;
   overflow: visible;
   padding: 0;
   background: transparent;
   font-family: var(--font-hand);
-  font-size: clamp(12px, 8.2cqi, 16px);
   font-weight: 500;
-  line-height: 1.12;
+  line-height: 1.16;
   letter-spacing: 0;
   filter: none;
 }
@@ -676,34 +691,74 @@ body {
   pointer-events: none;
 }
 
+/* The measured clear area of this sheet -- see @/lib/notePapers. */
 .note-copy {
   position: absolute;
-  inset: 16% 11% 14%;
+  top: var(--note-top);
+  right: var(--note-right);
+  bottom: var(--note-bottom);
+  left: var(--note-left);
   z-index: 1;
   display: flex;
-  align-items: center;
+  /*
+   * A column, so a restaurant note can stack its name over the description
+   * over the price. Centred on the cross axis rather than stretched, which is
+   * what keeps a plain one-line note sitting where it always did.
+   */
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.34em;
   margin: 0;
   overflow: hidden;
   overflow-wrap: anywhere;
   text-wrap: pretty;
 }
 
+.note-line {
+  display: block;
+  width: 100%;
+}
+
+/* The place's name. Underscored the way you would underline it by hand. */
+.note-heading {
+  font-size: 1.14em;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: from-font;
+  text-underline-offset: 0.16em;
+}
+
+.note-footnote {
+  font-size: 0.86em;
+  opacity: 0.74;
+}
+
 .photo-card {
-  container-type: inline-size;
-  aspect-ratio: 3 / 3.7;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
   background: transparent;
-  box-shadow: none;
+}
+
+.photo-card img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 3.7;
+  object-fit: cover;
+  pointer-events: none;
+  transition: translate 220ms ease;
 }
 
 .scrap-pin:hover .note-card {
   filter: none;
 }
 
-.photo-card:hover {
-  transform: translateY(-5px);
+.scrap-pin.is-photo:hover .photo-card img {
+  translate: 0 -4px;
 }
 
-.photo-card:focus-visible,
 .note-card:focus-visible,
 .prompt-clip:focus-visible,
 .prompt-send:focus-visible {
@@ -725,109 +780,62 @@ body {
   box-shadow: none;
 }
 
-.photo-face {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  background: transparent;
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-  box-shadow: none;
-  filter: none;
-  clip-path: none;
-}
+/* --- Tape and loose paper scraps -------------------------------------- */
 
-.photo-front {
-  transform: rotateY(0deg);
-}
+/*
+ * These are scraps in their own right, not decoration painted onto the cards
+ * they sit near. Tape rides above the photos it holds down; stubs and stamps
+ * sit under them, so lifting a print uncovers what was beneath it.
+ */
 
-.photo-front img {
-  position: absolute;
-  inset: 0;
+.scrap-pin.is-decor .decor-scan {
   display: block;
   width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.photo-back {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 14% 12%;
-  transform: rotateY(180deg);
-}
-
-.photo-back-paper {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: fill;
+  height: auto;
   pointer-events: none;
-}
-
-.photo-back-caption {
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  max-width: 100%;
-  padding: 0;
-  background: none;
-  color: var(--color-ink);
-  font-family: var(--font-hand);
-  font-size: clamp(12px, 8.6cqi, 17px);
-  line-height: 1.18;
-  letter-spacing: 0;
-  text-align: center;
-  overflow-wrap: anywhere;
-  text-wrap: pretty;
-  rotate: -2deg;
-}
-
-.photo-card.is-flipped {
-  transform: rotateY(180deg);
-  transition:
-    transform 500ms ease,
-    box-shadow 220ms ease;
-}
-
-.photo-card.is-flipped:hover {
-  transform: translateY(-7px) rotateY(180deg);
-}
-
-.ephemera-asset {
-  position: absolute;
-  z-index: 200;
-  height: auto;
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-  pointer-events: auto;
-  filter: none;
-}
-
-.ephemera-asset img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
-.board-assets {
-  position: absolute;
-  inset: 0;
-  z-index: 6;
-  pointer-events: none;
-}
-
-.board-assets img {
-  position: absolute;
-  display: block;
-  max-width: 10vw;
-  height: auto;
-  opacity: 0.88;
   filter: drop-shadow(2px 3px 4px rgb(64 43 25 / 0.16));
+}
+
+.scrap-pin.is-washi .decor-scan {
+  opacity: 0.94;
+  filter: drop-shadow(1px 2px 2px rgb(64 43 25 / 0.14));
+}
+
+.scrap-pin.is-ephemera .decor-scan {
+  opacity: 0.9;
+}
+
+/*
+ * Pixel-art stickers with a black matte. Screen blend drops the black so only
+ * the twinkle sits on the paper, the way a gel pen star would.
+ */
+.scrap-pin.is-sparkle {
+  pointer-events: auto;
+}
+
+.scrap-pin.is-sparkle .decor-scan {
+  mix-blend-mode: screen;
+  opacity: 0.95;
+  filter: none;
+  image-rendering: pixelated;
+}
+
+/*
+ * A strip of tape is smaller than the stamp that removes it, so the controls
+ * hang off the corner rather than covering the thing they belong to.
+ */
+.scrap-pin.is-decor .stamp-controls,
+.scrap-pin.is-palette .stamp-controls {
+  right: -16px;
+  bottom: -16px;
+}
+
+.scrap-pin.is-decor .stamp-mark,
+.scrap-pin.is-decor .stamp-mark svg,
+.scrap-pin.is-palette .stamp-mark,
+.scrap-pin.is-palette .stamp-mark svg {
+  width: 26px;
+  height: 26px;
 }
 
 .resize-handle {
@@ -857,11 +865,45 @@ body {
 }
 
 .scrap-pin:hover .resize-handle,
-.ephemera-asset:hover .resize-handle,
 .paper-bulldog:hover .resize-handle,
 .page-title:hover .resize-handle,
 .bead-title:hover .resize-handle,
 .is-resizing .resize-handle {
+  opacity: 1;
+}
+
+.rotate-handle {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 12;
+  display: grid;
+  width: 19px;
+  height: 19px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.84);
+  color: rgb(42 36 32 / 0.62);
+  cursor: grab;
+  opacity: 0;
+  touch-action: none;
+  transition: opacity 160ms ease;
+}
+
+.rotate-handle svg {
+  width: 12px;
+  height: 12px;
+}
+
+.rotate-handle:active {
+  cursor: grabbing;
+}
+
+.scrap-pin:hover .rotate-handle,
+.scrap-pin:focus-within .rotate-handle,
+.is-resizing .rotate-handle {
   opacity: 1;
 }
 
@@ -1197,38 +1239,6 @@ body {
     height: 34%;
   }
 
-  .palette-strip {
-    top: 14px;
-    left: 50%;
-    width: auto;
-    translate: -50% 0;
-    flex-direction: row;
-    padding: 10px 14px 8px;
-  }
-
-  .palette-pin {
-    display: none;
-  }
-
-  .palette-chips {
-    flex-direction: row;
-    gap: 6px;
-    padding: 0;
-  }
-
-  .palette-chip {
-    width: 48px;
-  }
-
-  .palette-chip:nth-child(odd),
-  .palette-chip:nth-child(even) {
-    margin: 0;
-  }
-
-  .palette-swatch {
-    height: 22px;
-  }
-
   .page-title {
     top: 4%;
     left: 8%;
@@ -1254,12 +1264,12 @@ body {
   .scrap-pin,
   .palette-chip,
   .page-title,
-  .ephemera-asset,
   .prompt-dock,
   .saved-stamp,
   .type-caret,
   .chat-panel,
   .chat-loading-icon,
+  .chat-loading-step,
   .photo-bank-chip,
   .bead-letter,
   .vision-mark {
@@ -1267,7 +1277,6 @@ body {
   }
 
   .vision-mark,
-  .ephemera-asset,
   .bead-letter {
     opacity: 1;
   }
@@ -1281,10 +1290,8 @@ body {
     transform: none;
   }
 
-  .photo-card,
-  .note-card,
-  .photo-card.is-flipped,
-  .photo-card.is-flipped:hover {
+  .photo-card img,
+  .note-card {
     transition: none;
   }
 }
@@ -1493,13 +1500,10 @@ body {
   max-width: 82%;
   flex-direction: column;
   padding: 8px 14px 9px;
-  background: #fdf6b8;
-  color: var(--color-ink);
+  background: var(--slip-paper, #fdf6b8);
+  color: var(--slip-ink, var(--color-ink));
   rotate: -1.6deg;
   pointer-events: none;
-  box-shadow:
-    1.5px 3px 0 rgb(110 58 22 / 0.12),
-    3px 6px 0 rgb(110 58 22 / 0.18);
 }
 
 .scrap-pin:nth-child(even) .scrap-label {
@@ -1508,7 +1512,7 @@ body {
 
 .scrap-label-title {
   font-family: var(--font-hand);
-  font-size: 22.5px;
+  font-size: 19px;
   font-weight: 600;
   line-height: 1.1;
   overflow-wrap: anywhere;
@@ -1520,7 +1524,7 @@ body {
   font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: lowercase;
-  color: rgb(42 36 32 / 0.62);
+  color: color-mix(in srgb, var(--slip-ink, var(--color-ink)) 62%, transparent);
 }
 
 /* --- Intro-screen status line ---------------------------------------- */
@@ -1585,6 +1589,72 @@ body {
 
 /* --- Footer: attribution ---------------------------------------------- */
 
+/*
+ * Save the board as a picture.
+ *
+ * Floats over the bottom-right corner of the paper rather than sitting in the
+ * gap beneath it -- the stage runs to within 28px of the viewport bottom, and
+ * a pill does not fit there. It reads as chrome rather than as another scrap,
+ * and it lives outside `.paper-stage`, so it is never in its own export.
+ */
+.board-share {
+  position: absolute;
+  right: 20px;
+  bottom: 18px;
+  z-index: 56;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  border: 1px solid rgb(255 255 255 / 0.28);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.16);
+  color: var(--glass-ink);
+  font-family: var(--font-product);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition:
+    background 180ms ease,
+    opacity 180ms ease;
+}
+
+.board-share:hover {
+  background: rgb(255 255 255 / 0.26);
+}
+
+.board-share svg {
+  width: 11px;
+  height: 11px;
+}
+
+.board-share.is-working {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.board-share.is-saved {
+  background: rgb(255 255 255 / 0.3);
+}
+
+.board-share.is-failed {
+  border-color: rgb(255 170 150 / 0.5);
+}
+
+/*
+ * Mid-capture. The handles are normally invisible only because nothing is
+ * hovering them, and the touch media query below makes the remove stamps
+ * permanent -- so this has to shout to keep them out of the picture.
+ */
+.paper-stage.is-exporting .resize-handle,
+.paper-stage.is-exporting .rotate-handle,
+.paper-stage.is-exporting .stamp-controls {
+  opacity: 0 !important;
+}
+
 .page-footer {
   position: absolute;
   right: 0;
@@ -1608,6 +1678,8 @@ body {
  * board as a faint line rather than as a credit block.
  */
 .unsplash-credits {
+  /* Keeps a long credit line from running under the share pill. */
+  max-width: calc(100% - 320px);
   margin: 0;
   color: var(--glass-ink);
   font-family: var(--font-product);
@@ -1637,6 +1709,18 @@ body {
 @media (max-width: 720px) {
   .page-footer {
     bottom: 4px;
+  }
+
+  .board-share {
+    right: 12px;
+    bottom: 10px;
+    padding: 5px 9px;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+  }
+
+  .unsplash-credits {
+    max-width: 100%;
   }
 
   .photo-bank-chips {

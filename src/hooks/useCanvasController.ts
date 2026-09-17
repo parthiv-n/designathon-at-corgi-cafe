@@ -1,16 +1,45 @@
 'use client';
 
 import { useCallback, useRef, useState, type ReactNode } from 'react';
-import { readStreamableValue } from '@ai-sdk/rsc';
+import { readStreamableValue, type StreamableValue } from '@ai-sdk/rsc';
 
 import { refineCanvasState } from '../actions/chatRefiner';
 import { processInstagramVibe } from '../actions/processInstagram';
 import {
   applyCanvasPatch,
   describePatch,
+  newLayoutSeed,
   type CanvasState,
   type ChatMessage,
 } from '../lib/vibeBoard';
+
+/**
+ * First line on screen, before the server has reported a step of its own.
+ *
+ * The model has to read the page and decide what to do before any of the
+ * build starts, and that is the slowest single stretch of the turn, so it
+ * gets a name rather than a spinner with nothing next to it.
+ */
+const FIRST_PHASE = {
+  chat: 'assessing the vibe',
+  instagram: 'reading the post',
+} as const;
+
+/**
+ * The last step, and the only one the server cannot time: drawing the page.
+ *
+ * The server's own final step is finding the backdrop, which is instant once
+ * that destination has been searched before -- so announcing the build there
+ * meant it flashed past unseen on every warm run. The cards dropping onto the
+ * paper is real, unavoidable work, and it is what the reader is waiting to
+ * see, so the label stays up until they have all landed.
+ *
+ * Matches the longest `animationDelay` in ScrapbookCanvas plus the length of
+ * `pin-on` in globals.css.
+ */
+const BOARD_DRAW_MS = 1_300;
+
+const drawn = () => new Promise(resolve => setTimeout(resolve, BOARD_DRAW_MS));
 
 function friendlyError(cause: unknown, fallback: string): string {
   const message = cause instanceof Error ? cause.message : '';
@@ -85,6 +114,25 @@ export function useCanvasController(
     setCanvasStateRaw(next);
   }, []);
 
+  /**
+   * Follows the server's running commentary on its own progress.
+   *
+   * Read alongside the data channel rather than before it: both are open at
+   * once, and awaiting this one first would hold the board hostage until the
+   * work it is narrating had already finished.
+   */
+  const followPhases = useCallback(
+    (phases: StreamableValue<string>) =>
+      (async () => {
+        for await (const label of readStreamableValue(phases)) {
+          if (label) setStatus(label);
+        }
+      })().catch(() => {
+        // The status line is decoration; losing it must not fail the turn.
+      }),
+    [],
+  );
+
   /** Same shape for both flows: read a ref, write both the ref and the state. */
   const mutate = useCallback(
     (fn: (state: CanvasState) => CanvasState) => {
@@ -99,12 +147,15 @@ export function useCanvasController(
 
       setIsPending(true);
       setError(null);
-      setStatus('developing the photos...');
+      setStatus(FIRST_PHASE.instagram);
+
+      let drawing = false;
 
       try {
         const result = await processInstagramVibe(url);
 
         setNodes(prev => [...prev, result.ui]);
+        followPhases(result.phase);
 
         // The action resolves before the tool finishes, so the board lands here
         // over time rather than with the return value.
@@ -116,16 +167,21 @@ export function useCanvasController(
           setCanvasState({
             vibeSummary: board.vibeSummary,
             destination: board.destination ?? '',
+            focus: board.focus ?? '',
             colorPalette: board.colorPalette,
             activities: board.activities,
             photoBank: board.photoBank,
+            fillerPhotos: board.fillerPhotos ?? [],
             originalImage: board.originalImage,
             backdropImage: board.backdropImage,
             post: board.post,
             pinned: [],
             dismissed: [],
+            // A new post is a new page, so it gets a new scatter.
+            layoutSeed: newLayoutSeed(),
           });
-          setStatus('');
+          setStatus('building your board');
+          drawing = true;
         }
 
         // A conversation about a board the director has never seen goes badly,
@@ -138,12 +194,17 @@ export function useCanvasController(
         setMessages([opener]);
       } catch (cause) {
         setError(friendlyError(cause, 'Could not read that post'));
-        setStatus('');
+        drawing = false;
       } finally {
+        if (drawing) await drawn();
+        // Clearing here rather than only on success: a turn that ends without
+        // ever streaming a board would otherwise leave the last step it
+        // announced sitting on screen, still claiming to be working.
+        setStatus('');
         setIsPending(false);
       }
     },
-    [isPending, setCanvasState],
+    [followPhases, isPending, setCanvasState],
   );
 
   const sendMessage = useCallback(
@@ -159,20 +220,37 @@ export function useCanvasController(
       setMessages(nextMessages);
       setIsPending(true);
       setError(null);
-      setStatus('rearranging the page...');
+      setStatus(FIRST_PHASE.chat);
+
+      // Only a whole new board is worth holding the spinner for. Adding a stop
+      // or swapping a card drops one scrap, which needs no narration.
+      let rebuilding = false;
 
       try {
         const result = await refineCanvasState(nextMessages, canvasRef.current);
 
         setNodes(prev => [...prev, result.ui]);
+        followPhases(result.phase);
 
         // The action resolves before the tools finish, so the patches arrive
         // here over time rather than all at once.
         for await (const patch of readStreamableValue(result.patch)) {
           if (!patch) continue;
 
-          mutate(state => applyCanvasPatch(state, patch));
-          setStatus('');
+          if (patch.type !== 'talk') {
+            mutate(state => {
+              const next = applyCanvasPatch(state, patch);
+              // A whole-board pivot throws the page away, so it gets a fresh
+              // scatter. Every other patch edits the page in front of the user,
+              // where re-rolling would fling the scraps they have already moved.
+              return patch.type === 'board'
+                ? { ...next, layoutSeed: newLayoutSeed() }
+                : next;
+            });
+          }
+
+          rebuilding = patch.type === 'board';
+          setStatus(rebuilding ? 'building your board' : '');
 
           const assistantTurn: ChatMessage = {
             role: 'assistant',
@@ -183,12 +261,14 @@ export function useCanvasController(
         }
       } catch (cause) {
         setError(friendlyError(cause, 'Could not reach the director'));
+        rebuilding = false;
       } finally {
+        if (rebuilding) await drawn();
         setStatus('');
         setIsPending(false);
       }
     },
-    [isPending, mutate],
+    [followPhases, isPending, mutate],
   );
 
   const removeCard = useCallback(

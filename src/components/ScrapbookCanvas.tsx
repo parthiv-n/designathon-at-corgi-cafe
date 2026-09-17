@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { BeadTitle } from "@/components/BeadTitle";
-import { BoardAssets } from "@/components/BoardAssets";
+import { DecorPiece } from "@/components/DecorPiece";
 import { NoteCard } from "@/components/NoteCard";
+import { PalettePiece } from "@/components/PalettePiece";
 import { PhotoCard } from "@/components/PhotoCard";
 import { buildCards } from "@/lib/layout";
 import type { CanvasState } from "@/lib/vibeBoard";
@@ -38,36 +39,64 @@ export function ScrapbookCanvas({
     titlePrompt?.trim() ||
     canvasState.vibeSummary;
 
-  // A new post re-keys every card so the whole page re-pins; within one post,
-  // card ids carry their content, so only what actually changed remounts.
-  const generation = canvasState.originalImage ?? "empty";
+  // A fresh layout re-keys every scrap so the whole page re-pins; within one
+  // layout, ids carry their content, so only what actually changed remounts.
+  const generation = canvasState.layoutSeed;
 
   return (
     <section className="scrap-canvas" aria-label="Scrapbook canvas">
-      {cards.length > 0 ? (
-        <BoardAssets seed={`${heading}-${generation}`} />
-      ) : null}
       {heading ? <BeadTitle prompt={heading} locked={false} /> : null}
 
-      {cards.map((card, index) =>
-        card.kind === "photo" ? (
-          <PhotoCard
-            key={`${generation}-${card.id}`}
+      {cards.map((card, index) => {
+        const key = `${generation}-${card.id}-${card.width}`;
+        const remove = () => onRemove(card.id);
+
+        if (card.kind === "photo") {
+          return (
+            <PhotoCard
+              key={key}
+              card={card}
+              index={index}
+              locked={false}
+              onRemove={remove}
+            />
+          );
+        }
+
+        if (card.kind === "note") {
+          return (
+            <NoteCard
+              key={key}
+              card={card}
+              index={index}
+              locked={false}
+              onRemove={remove}
+            />
+          );
+        }
+
+        if (card.kind === "palette") {
+          return (
+            <PalettePiece
+              key={key}
+              card={card}
+              index={index}
+              locked={false}
+              onRemove={remove}
+            />
+          );
+        }
+
+        return (
+          <DecorPiece
+            key={key}
             card={card}
             index={index}
             locked={false}
-            onRemove={() => onRemove(card.id)}
+            onRemove={remove}
           />
-        ) : (
-          <NoteCard
-            key={`${generation}-${card.id}`}
-            card={card}
-            index={index}
-            locked={false}
-            onRemove={() => onRemove(card.id)}
-          />
-        ),
-      )}
+        );
+      })}
     </section>
   );
 }

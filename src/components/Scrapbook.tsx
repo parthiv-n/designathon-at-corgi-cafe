@@ -1,15 +1,17 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { DestinationBackdrop } from "@/components/DestinationBackdrop";
 import { PromptBar } from "@/components/PromptBar";
 import { ResizeHandle } from "@/components/ResizeHandle";
 import { ScrapbookCanvas } from "@/components/ScrapbookCanvas";
+import { ShareButton } from "@/components/ShareButton";
 import { SidePanel } from "@/components/SidePanel";
 import { UnsplashCredits } from "@/components/UnsplashCredits";
 import { useBoardDrag } from "@/hooks/useBoardDrag";
 import { useCanvasController } from "@/hooks/useCanvasController";
 import { useResize } from "@/hooks/useResize";
+import { guessDestination } from "@/lib/destination";
 import { type SubmitOptions } from "@/lib/onboarding";
 import { EMPTY_CANVAS, looksLikeInstagramUrl } from "@/lib/vibeBoard";
 
@@ -29,7 +31,11 @@ export function Scrapbook() {
   // The bulldog clip is furniture, not content: it drags and resizes but holds
   // no state anyone needs back.
   const clip = useBoardDrag({ x: 77, y: 2 }, "paper-stage", "chrome");
-  const clipSize = useResize(146, 64, 220);
+  const clipSize = useResize(118, 56, 180);
+
+  // What the share button rasterises. The stage rather than the page, so the
+  // chat panel and the button itself stay out of the picture.
+  const stageRef = useRef<HTMLDivElement>(null);
 
   const { canvasState } = canvas;
   const revealed =
@@ -75,7 +81,12 @@ export function Scrapbook() {
     if (looksLikeInstagramUrl(value)) {
       void canvas.runInstagram(value).then(() => setLoose(true));
     } else {
-      setTitlePrompt((current) => current || value);
+      // The beads spell a place, and the raw prompt is a sentence: "I want to
+      // go to Brazil for carnival" put "I WANT" on the paper for as long as
+      // the director took to answer. This is only the stand-in -- the real
+      // destination arrives with the patch and replaces it.
+      const guess = guessDestination(value);
+      if (guess) setTitlePrompt((current) => current || guess);
       void canvas.sendMessage(value).then(() => setLoose(true));
     }
   }
@@ -105,6 +116,7 @@ export function Scrapbook() {
         messages={canvas.messages}
         error={canvas.error}
         busy={canvas.isPending}
+        status={canvas.status}
         active={panelOpen}
         photos={canvasState.photoBank}
         pinned={canvasState.pinned}
@@ -118,7 +130,7 @@ export function Scrapbook() {
         onboardingReady={onboardingReady}
       />
 
-      <div className="paper-stage">
+      <div className="paper-stage" ref={stageRef}>
         <div className="paper-sheet" aria-hidden="true" />
 
         {!revealed ? (
@@ -164,6 +176,15 @@ export function Scrapbook() {
             onboardingReady={onboardingReady}
           />
         </div>
+      ) : null}
+
+      {revealed ? (
+        <ShareButton
+          stageRef={stageRef}
+          destination={
+            canvasState.destination || canvasState.post.place || titlePrompt
+          }
+        />
       ) : null}
 
       <footer className="page-footer">

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { extendPalette, tidyHex } from './ink';
+
 // Model selection lives in ./modelChain.ts (MODEL_CHAIN), which both flows
 // fall through on 503s. Gemini handles both photo analysis and the chat
 // director -- there is no OpenAI key in this project.
@@ -54,6 +56,35 @@ export type Activity = z.infer<typeof activitySchema> & {
 };
 
 /**
+ * Places to write down rather than photograph.
+ *
+ * Every other kind of stop has a canonical picture: search "Shibuya Crossing"
+ * and you get Shibuya Crossing. Restaurants and bars have no such thing. What
+ * comes back is whatever a stranger uploaded under that name -- a flash-lit
+ * plate, a dim room, a doorway sign -- and pinned to a page that promises
+ * every print is the place it is labelled as, those read as the board having
+ * given up. A written recommendation is what a real scrapbook does with a
+ * restaurant tip anyway.
+ *
+ * Matched on `placeType`, which is the field the model is asked to categorise
+ * with, rather than on the title -- "Hell's Kitchen" is a neighbourhood.
+ */
+const FOOD_OR_DRINK =
+  /\b(restaurants?|bars?|pubs?|gastropubs?|cafes?|café|coffee|coffeehouse|bistros?|brasseries?|diners?|eateries|eatery|canteens?|cantinas?|izakayas?|taverns?|tavernas?|trattorias?|osterias?|pizzerias?|steakhouses?|grills?|bbq|barbecue|ramen|sushi|noodles?|bakeries|bakery|patisseries?|pastry|delis?|delicatessens?|breweries|brewery|brewpubs?|taprooms?|beer|wineries|winery|cocktails?|speakeasy|speakeasies|distilleries|distillery|teahouses?|tea house|tea room|desserts?|gelato|ice cream|creamery|juice|smoothie|food|dining|dinner|lunch|brunch|breakfast|supper|snacks?|kitchens?|night market)\b/i;
+
+/**
+ * True when this stop should go up as a note if Places has no photo of it.
+ *
+ * Safe to call on a half-formed activity: `placeType` comes through `guided()`,
+ * so an empty string is a live possibility and simply means "not food".
+ */
+export function isFoodOrDrinkStop(activity: {
+  placeType?: string;
+}): boolean {
+  return FOOD_OR_DRINK.test(activity.placeType ?? '');
+}
+
+/**
  * Field contents are deliberately loose (plain strings with descriptions
  * rather than a /^#[0-9a-f]{6}$/ regex) so a slightly-off model response
  * cannot throw a Zod error mid-demo. Shape is strict, contents are guided.
@@ -65,21 +96,24 @@ export const vibeBoardSchema = z.object({
   destination: guided(
     'The place name for the letter-bead title. One short proper noun: a city, island, region or country. Examples: "Ibiza", "Sweden", "Brisbane", "New York". Never a vibe word or a full sentence.',
   ),
+  focus: guided(
+    'What this trip is about, in two to five lowercase words, e.g. "carnival season", "cheap street food", "late night techno". Empty string if the post gives you nothing to go on.',
+  ),
   vibeSummary: z
     .string()
     .describe(
       'A punchy 3-5 word description of the aesthetic, e.g. "Neon Cyberpunk Night"',
     ),
-  // `.length(3)` is left off both arrays on purpose. The prompt and these
-  // descriptions ask for three, but a model that returns two or four should
-  // give a slightly-off board rather than no board: normalizePalette pads the
-  // palette, and the layout has slots for extra stops. An exact-length rule
-  // here only converts a small miscount into a total failure.
+  // A fixed `.length()` is left off both arrays on purpose. These descriptions
+  // ask for five colours and three stops, but a model that miscounts should
+  // give a slightly-off board rather than no board: normalizePalette settles
+  // the palette either way, and the layout has slots for extra stops. An
+  // exact-length rule here only converts a small miscount into a total failure.
   colorPalette: z
     .array(z.string())
     .catch([])
     .describe(
-      'Exactly three hex colour codes drawn from the photo, e.g. "#1a0b2e"',
+      'Five hex colour codes drawn from the photo, e.g. "#1a0b2e". These are printed on the board as a swatch card, so they must be real hex codes and should read as a palette someone chose: a dark, a light, and the accents between them.',
     ),
   activities: z
     .array(activitySchema)
@@ -157,6 +191,25 @@ export function parseCaptionLegend(
 }
 
 /**
+ * A destination photo used to top a thin board up to the minimum.
+ *
+ * `label` is what the picture is actually of -- "eiffel tower", not the city
+ * the letter beads already spell. Repeating the destination on every slip
+ * tells the reader nothing they did not get from the title.
+ */
+export type FillerKind = "food" | "outfit";
+
+export type FillerPhoto = {
+  src: string;
+  label: string;
+  /**
+   * Stock inspo pulled alongside destination scenes. Scene fillers omit this
+   * so they keep reading as a place; food/outfit slips get a type line instead.
+   */
+  kind?: FillerKind;
+};
+
+/**
  * What the Instagram action streams back: the model's board, every image the
  * scraper found (which fills the rail), and what the post itself said.
  */
@@ -165,6 +218,8 @@ export type VibeBoardPayload = VibeBoardData & {
   post: PostDetails;
   /** Wide destination photo, never one of the scrapbook cards. */
   backdropImage?: string;
+  /** Destination photos held back to top a thin board up to the minimum. */
+  fillerPhotos?: FillerPhoto[];
 };
 
 /** What the chat director mutates. */
@@ -172,12 +227,27 @@ export interface CanvasState {
   vibeSummary: string;
   /** Place name the letter beads spell. Lifted from the prompt or the post. */
   destination: string;
+  /**
+   * What the trip is *for* -- "carnival season", "cheap street food". Steers
+   * which places the director picks and stays in context for follow-ups, so
+   * "add some bars" on a carnival board returns carnival bars.
+   */
+  focus: string;
   colorPalette: string[];
   activities: Activity[];
   /** Every image pulled from the scraped post. Drives the photo bank rail. */
   photoBank: string[];
   /** Bank photos the user has clicked onto the board. */
   pinned: string[];
+  /**
+   * Photos of the destination itself, used only to top a thin board up to the
+   * minimum. Search does not find a usable photo for every stop the director
+   * names, and two prints on a page reads as a broken board rather than a
+   * sparse one. These are held apart from `photoBank`, which means "came off
+   * the scraped post" and feeds the gallery rail. `label` is what the picture
+   * is of, so the slip can name the landmark instead of repeating the city.
+   */
+  fillerPhotos: FillerPhoto[];
   /** The post's cover photo, pinned as the board's hero scrap. */
   originalImage?: string;
   /** Destination wallpaper. Must not be a photo already taped to the page. */
@@ -186,19 +256,37 @@ export interface CanvasState {
   post: PostDetails;
   /** Cards the user crossed off the page. */
   dismissed: string[];
+  /**
+   * Seeds every position, rotation and size on the page. Rolled once per board
+   * so a second board of the same city lays out differently, and held steady
+   * after that so nothing shuffles under the user mid-session.
+   */
+  layoutSeed: string;
 }
 
 /** Nothing scraped yet: blank board, empty slots in the rail. */
 export const EMPTY_CANVAS: CanvasState = {
   vibeSummary: '',
   destination: '',
-  colorPalette: ['#1f4e6b', '#e2b84a', '#8e3b4a'],
+  focus: '',
+  colorPalette: ['#1f4e6b', '#e2b84a', '#8e3b4a', '#d8cbb0', '#2b3a44'],
   activities: [],
   photoBank: [],
   pinned: [],
+  fillerPhotos: [],
   post: {},
   dismissed: [],
+  layoutSeed: 'initial',
 };
+
+/**
+ * A fresh layout seed. Called only when a board is built from scratch, never
+ * on an edit -- re-rolling mid-session would throw every scrap the user has
+ * already dragged back into the air.
+ */
+export function newLayoutSeed(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -209,25 +297,50 @@ export interface ChatMessage {
  * streamUI hands the client a ReactNode, which a hook cannot read values back
  * out of. So tools emit one of these onto a parallel streamable channel and
  * the client folds them into state with applyCanvasPatch.
+ *
+ * `reply` is what the user reads in chat. The director writes it; the client
+ * prefers it over the canned describePatch line so a question actually gets
+ * an answer instead of only a list of names.
  */
-export type CanvasPatch =
+export type CanvasPatch = {
+  reply?: string;
+} & (
+  | { type: 'talk' }
   | {
       type: 'theme';
       vibeSummary: string;
       colorPalette: string[];
       destination?: string;
+      focus?: string;
       backdropImage?: string;
     }
   | { type: 'swap'; index: number; activity: Activity; backdropImage?: string }
-  | { type: 'add'; activities: Activity[]; backdropImage?: string }
+  | {
+      type: 'add';
+      activities: Activity[];
+      focus?: string;
+      destination?: string;
+      backdropImage?: string;
+    }
+  | {
+      type: 'place';
+      destination: string;
+      focus?: string;
+      activities?: Activity[];
+      fillerPhotos?: FillerPhoto[];
+      backdropImage?: string;
+    }
   | {
       type: 'board';
       vibeSummary: string;
       colorPalette: string[];
       activities: Activity[];
       destination?: string;
+      focus?: string;
       backdropImage?: string;
-    };
+      fillerPhotos?: FillerPhoto[];
+    }
+);
 
 /** Instagram's photo CDNs. Anything else must not go through the proxy. */
 export function isInstagramCdnHost(hostname: string): boolean {
@@ -261,7 +374,20 @@ export function displayPhotoUrl(url: string): string {
   return url;
 }
 
-export const DEFAULT_PALETTE = ['#1a0b2e', '#ff2e88', '#00e5ff'];
+export const DEFAULT_PALETTE = [
+  '#1a0b2e',
+  '#ff2e88',
+  '#00e5ff',
+  '#f5c518',
+  '#3b1f5e',
+];
+
+/**
+ * The swatch strip on the board reads thin below four chips and crowded above
+ * five, and those are the only numbers the model is ever asked for.
+ */
+export const MIN_PALETTE = 4;
+export const MAX_PALETTE = 5;
 
 /**
  * Matches any Instagram permalink shape: /p/, /reel/, /reels/, /tv/, an
@@ -279,29 +405,109 @@ export function looksLikeInstagramUrl(value: string): boolean {
   return INSTAGRAM_PERMALINK_RE.test(value);
 }
 
+/** "Le Comptoir, Du Pain, and Stohrer" — a sentence, not a log line. */
+export function andJoin(names: string[]): string {
+  const clean = names.map(name => name.trim()).filter(Boolean);
+  if (clean.length === 0) return '';
+  if (clean.length === 1) return clean[0];
+  if (clean.length === 2) return `${clean[0]} and ${clean[1]}`;
+  return `${clean.slice(0, -1).join(', ')}, and ${clean[clean.length - 1]}`;
+}
+
+/**
+ * Confirmation when stops land on the page.
+ *
+ * "Added X, Y, Z." reads as a system log. This keeps the names but puts them
+ * in a sentence someone would actually send.
+ */
+export function addedStopsReply(titles: string[]): string {
+  const names = titles.map(title => title.trim()).filter(Boolean);
+  if (names.length === 0) {
+    return 'Nothing landed this time — try asking another way.';
+  }
+  if (names.length === 1) {
+    return `Added that — ${names[0]} is on the board now.`;
+  }
+  const those =
+    names.length === 2
+      ? 'those two'
+      : names.length === 3
+        ? 'those three'
+        : names.length === 4
+          ? 'those four'
+          : 'those';
+  return `Added ${those} — ${andJoin(names)} are on the board now.`;
+}
+
+/** Stops that are not already on the canvas, compared by title. */
+export function freshActivities<T extends { title: string }>(
+  current: T[],
+  incoming: T[],
+): T[] {
+  const have = new Set(current.map(activity => activity.title.toLowerCase()));
+  return incoming.filter(
+    activity => !have.has(activity.title.toLowerCase()),
+  );
+}
+
+/** First board keeps "{City} — {vibe}."; a mid-chat city switch names the turn. */
+export function boardVibeReply(
+  destination: string | undefined,
+  vibeSummary: string,
+  previousDestination?: string,
+): string {
+  const place = destination?.trim() ?? '';
+  const vibe = vibeSummary.trim().toLowerCase();
+  const previous = previousDestination?.trim() ?? '';
+  const switched =
+    Boolean(previous && place) &&
+    previous.toLowerCase() !== place.toLowerCase();
+
+  if (switched && place && vibe) return `${place} it is — ${vibe} instead.`;
+  if (place && vibe) return `${place} — ${vibe}.`;
+  if (switched && place) return `${place} it is.`;
+  if (place) return `${place}.`;
+  if (vibe) return vibe.endsWith('.') ? vibe : `${vibe}.`;
+  return 'The board is ready.';
+}
+
 /**
  * The director's reply is a ReactNode, so there is no text to put in the
  * history. This turns the patch into an assistant turn instead, which is what
  * keeps follow-ups like "make it even cheaper" in context.
  */
 export function describePatch(patch: CanvasPatch): string {
+  if (patch.reply?.trim()) return patch.reply.trim();
+
   switch (patch.type) {
+    case 'talk':
+      return 'What do you want to change.';
     case 'theme':
-      return `Done — I gave your board a ${patch.vibeSummary.toLowerCase()} feel.`;
+      return `The page is leaning ${patch.vibeSummary.toLowerCase()} now.`;
     case 'swap':
-      return `Swapped that stop for ${patch.activity.title}.`;
+      return `${patch.activity.title} is on that card now.`;
     case 'add':
-      return `Added ${patch.activities.map(a => a.title).join(', ')}.`;
+      return addedStopsReply(patch.activities.map(a => a.title));
+    case 'place': {
+      const place = patch.destination.trim();
+      const added = (patch.activities ?? []).map(a => a.title);
+      if (place && added.length > 0) {
+        return `${place} it is — ${andJoin(added)} ${added.length === 1 ? 'is' : 'are'} on the board now.`;
+      }
+      if (place) return `${place} it is.`;
+      if (added.length > 0) return addedStopsReply(added);
+      return 'The beads follow.';
+    }
     case 'board': {
       const place = patch.destination?.trim();
       const vibe = patch.vibeSummary.trim().toLowerCase();
       if (place && vibe) return `${place} — ${vibe}.`;
       if (place) return `${place}.`;
-      if (vibe) return `Here's a ${vibe} board.`;
-      return 'Your board is ready.';
+      if (vibe) return `${vibe}.`;
+      return 'The board is ready.';
     }
     default:
-      return 'All set — I updated your board.';
+      return 'The board moved with you.';
   }
 }
 
@@ -321,13 +527,36 @@ export function usableActivities<T extends { title: string }>(
   );
 }
 
-/** Pads or trims to exactly three entries so the UI never gets a short array. */
+/**
+ * Settles the palette at four or five real colours.
+ *
+ * Entries that are not hex are dropped rather than passed through: they used
+ * to reach the board as broken CSS, and now that the colours are printed on a
+ * swatch card as text, "deep teal" would be printed too.
+ *
+ * A short palette is grown from the colours the model *did* choose rather than
+ * topped up from the default, so a board of desert ochres does not end up with
+ * a neon cyan chip stapled to the end of its strip.
+ */
 export function normalizePalette(
   next: string[] | undefined,
   fallback: string[] = DEFAULT_PALETTE,
 ): string[] {
-  const source = next?.filter(c => typeof c === 'string' && c.length > 0) ?? [];
-  return [0, 1, 2].map(i => source[i] ?? fallback[i] ?? DEFAULT_PALETTE[i]);
+  const offered = (next ?? []).filter(
+    (color): color is string =>
+      typeof color === 'string' && tidyHex(color) !== null,
+  );
+
+  if (offered.length >= MIN_PALETTE) return offered.slice(0, MAX_PALETTE);
+  if (offered.length > 0) return extendPalette(offered, MAX_PALETTE);
+
+  // Nothing usable. Keep the board looking like itself if it already has
+  // colours, and only fall back to the house palette on a cold start.
+  const previous = fallback.filter(color => tidyHex(color) !== null);
+
+  return previous.length > 0
+    ? extendPalette(previous, MAX_PALETTE)
+    : [...DEFAULT_PALETTE];
 }
 
 /** Pure reducer, kept out of the hook so it stays testable. */
@@ -336,12 +565,16 @@ export function applyCanvasPatch(
   patch: CanvasPatch,
 ): CanvasState {
   switch (patch.type) {
+    case 'talk':
+      return state;
+
     case 'theme':
       return {
         ...state,
         vibeSummary: patch.vibeSummary,
         colorPalette: normalizePalette(patch.colorPalette, state.colorPalette),
         destination: patch.destination?.trim() || state.destination,
+        focus: patch.focus?.trim() || state.focus,
         backdropImage: patch.backdropImage ?? state.backdropImage,
       };
 
@@ -359,17 +592,32 @@ export function applyCanvasPatch(
     }
 
     case 'add': {
-      const existing = new Set(
-        state.activities.map(a => a.title.toLowerCase()),
+      const incoming = patch.activities ?? [];
+      const updates = new Map(
+        incoming.map(activity => [activity.title.toLowerCase(), activity]),
       );
-      // The director will happily suggest a place already on the page.
-      const fresh = (patch.activities ?? []).filter(
-        a => !existing.has(a.title.toLowerCase()),
+      const activities = state.activities.map(
+        activity => updates.get(activity.title.toLowerCase()) ?? activity,
       );
-      if (fresh.length === 0) return state;
+      const fresh = freshActivities(activities, incoming);
       return {
         ...state,
-        activities: [...state.activities, ...fresh],
+        activities: [...activities, ...fresh],
+        focus: patch.focus?.trim() || state.focus,
+        destination: patch.destination?.trim() || state.destination,
+        backdropImage: patch.backdropImage ?? state.backdropImage,
+      };
+    }
+
+    case 'place': {
+      const fresh = freshActivities(state.activities, patch.activities ?? []);
+      return {
+        ...state,
+        destination: patch.destination.trim() || state.destination,
+        focus: patch.focus?.trim() || state.focus,
+        activities:
+          fresh.length > 0 ? [...state.activities, ...fresh] : state.activities,
+        fillerPhotos: patch.fillerPhotos ?? state.fillerPhotos,
         backdropImage: patch.backdropImage ?? state.backdropImage,
       };
     }
@@ -385,7 +633,10 @@ export function applyCanvasPatch(
         activities:
           patch.activities?.length > 0 ? patch.activities : state.activities,
         destination: patch.destination?.trim() || state.destination,
+        focus: patch.focus?.trim() || state.focus,
         backdropImage: patch.backdropImage ?? state.backdropImage,
+        // A new destination's top-ups have nothing to do with the old one's.
+        fillerPhotos: patch.fillerPhotos ?? [],
         dismissed: [],
       };
 
@@ -481,8 +732,9 @@ export const MOCK_POST = {
 export const FALLBACK_VIBE_BOARD: VibeBoardData = {
   originalImage: MOCK_POST.imageUrls[0],
   destination: 'Tokyo',
+  focus: 'late night neon wandering',
   vibeSummary: 'Neon Cyberpunk Night',
-  colorPalette: ['#12071f', '#ff2e88', '#00e5ff'],
+  colorPalette: ['#12071f', '#ff2e88', '#00e5ff', '#f5c518', '#4a2a6b'],
   activities: [
     {
       title: 'Omoide Yokocho',

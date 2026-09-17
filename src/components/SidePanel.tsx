@@ -30,6 +30,7 @@ export function SidePanel({
   messages,
   error,
   busy,
+  status,
   active,
   photos,
   pinned,
@@ -45,6 +46,8 @@ export function SidePanel({
   messages: ChatMessage[];
   error: string | null;
   busy: boolean;
+  /** The step the server is on, e.g. "collecting photos". Empty when idle. */
+  status: string;
   active: boolean;
   photos: string[];
   pinned: string[];
@@ -197,7 +200,16 @@ export function SidePanel({
                   strokeDasharray="34 16"
                 />
               </svg>
-              <span>thinking</span>
+              {/*
+                * Named steps rather than a single "thinking": a board takes
+                * the better part of half a minute to build, and the wait
+                * reads as a hang unless it can show it is moving. The label
+                * comes off the server as each step starts, so it is the work
+                * actually in flight and not a timer guessing at it.
+                */}
+              <span key={status} className="chat-loading-step">
+                {status || 'thinking'}
+              </span>
             </div>
           ) : null}
           {error ? (

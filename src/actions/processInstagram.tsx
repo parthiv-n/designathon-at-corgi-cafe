@@ -8,8 +8,12 @@ import {
 } from '@ai-sdk/rsc';
 
 import { withModelFallback } from '../lib/modelChain';
-import { backdropForBoard, withPlacePhotos } from '../lib/placePhotos';
-import { DESTINATION_GUIDE } from '../lib/destination';
+import {
+  backdropForBoard,
+  fillerPhotosFor,
+  withPlacePhotos,
+} from '../lib/placePhotos';
+import { DESTINATION_GUIDE, FOCUS_GUIDE } from '../lib/destination';
 import {
   FALLBACK_VIBE_BOARD,
   parseCaptionLegend,
@@ -56,7 +60,7 @@ it belongs in the same post.
 Rules:
 - Always call the generate_vibe_board tool exactly once. Never reply in prose.
 - Copy the first image URL you were given into originalImage verbatim.
-- colorPalette must be exactly three hex codes actually present in the photos.
+- colorPalette must be five hex codes that match the vibe of the photos, ordered dark to light. They are printed on the board as coloured squares with their hex codes, so they have to work together as a palette someone chose.
 - Give exactly three activities, ordered as a walkable day or evening.
 - activities[].title must be the REAL, SPECIFIC NAME of a real place --
   "Watkins Glen State Park", "Rooster Fish Brewing", "Taughannock Falls".
@@ -71,8 +75,12 @@ Rules:
   the look of the place (e.g. "jazz-bar-dark"), never a URL.
 - destination is the place the letter beads spell. Infer the city, island,
   region or country from the photos, caption and tagged place.
+- focus is what the post is about beyond its location, read off the caption
+  and the photos. Every activity has to serve it.
 
-${DESTINATION_GUIDE}`;
+${DESTINATION_GUIDE}
+
+${FOCUS_GUIDE}`;
 
 interface InstagramPost {
   /** Every frame in the post, cover first. Never empty. */
@@ -395,6 +403,8 @@ export interface InstagramVibeResult {
   ui: ReactNode;
   /** The typed board, for useCanvasController to seed the canvas from. */
   board: StreamableValue<VibeBoardPayload>;
+  /** Which step of the build is running, for the panel to show while it waits. */
+  phase: StreamableValue<string>;
 }
 
 /**
@@ -424,6 +434,7 @@ export async function processInstagramVibe(
   );
 
   const boardStream = createStreamableValue<VibeBoardPayload>();
+  const phaseStream = createStreamableValue<string>();
 
   // .done() throws if called twice, and every exit path wants to close the
   // channel, so all of them funnel through here.
@@ -433,8 +444,19 @@ export async function processInstagramVibe(
     closed = true;
     clearTimeout(failSafe);
     boardStream.done();
+    phaseStream.done();
+  };
+
+  /** Announces the step about to run, immediately before the await it names. */
+  const phase = (label: string) => {
+    if (!closed) phaseStream.update(label);
   };
   const failSafe = setTimeout(closeBoard, BOARD_CHANNEL_TIMEOUT_MS);
+
+  // Buffered until the client subscribes, which is the moment this action
+  // returns. Up to here the panel is still showing "reading the post", which
+  // is what the scrape and the frame downloads above actually were.
+  phase('assessing the vibe');
 
   try {
     const result = await withModelFallback(
@@ -481,8 +503,33 @@ export async function processInstagramVibe(
               generate: async function* (params) {
                 yield <p>reading the vibe...</p>;
 
+                const fromThePost = [post.imageUrls[0], ...post.imageUrls];
+
+                phase('collecting photos');
                 const activities = await withPlacePhotos(
                   usableActivities(params.activities),
+                  params.destination,
+                );
+                const colorPalette = normalizePalette(params.colorPalette);
+                const fillerPhotos = await fillerPhotosFor(
+                  params.destination || post.details.place || '',
+                  activities,
+                  fromThePost,
+                  {
+                    vibeSummary: params.vibeSummary,
+                    focus: params.focus,
+                    colorPalette,
+                  },
+                );
+
+                phase('building your board');
+                const backdropImage = await backdropForBoard(
+                  params.vibeSummary,
+                  activities,
+                  fromThePost,
+                  params.destination || post.details.place,
+                  undefined,
+                  params.destination,
                 );
 
                 boardStream.update({
@@ -490,17 +537,11 @@ export async function processInstagramVibe(
                   activities,
                   // The model paraphrases URLs surprisingly often.
                   originalImage: post.imageUrls[0],
-                  colorPalette: normalizePalette(params.colorPalette),
+                  colorPalette,
                   photoBank: post.imageUrls,
                   post: post.details,
-                  backdropImage: await backdropForBoard(
-                    params.vibeSummary,
-                    activities,
-                    [post.imageUrls[0], ...post.imageUrls],
-                    params.destination || post.details.place,
-                    undefined,
-                    params.destination,
-                  ),
+                  fillerPhotos,
+                  backdropImage,
                 });
                 closeBoard();
 
@@ -519,7 +560,11 @@ export async function processInstagramVibe(
       },
     );
 
-    return { ui: result.value, board: boardStream.value };
+    return {
+      ui: result.value,
+      board: boardStream.value,
+      phase: phaseStream.value,
+    };
   } catch (error) {
     // Every model was congested. Serve the fallback board rather than a 500 --
     // the pitch keeps moving, and the bank still fills from the scrape.
@@ -541,6 +586,7 @@ export async function processInstagramVibe(
     return {
       ui: <p>the models are busy -- here is one we had ready.</p>,
       board: boardStream.value,
+      phase: phaseStream.value,
     };
   }
 }

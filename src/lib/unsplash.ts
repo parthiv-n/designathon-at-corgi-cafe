@@ -28,6 +28,8 @@ export interface UnsplashPhoto {
   /** `urls.regular`, hotlinked as the API guidelines require. */
   src: string;
   alt?: string;
+  /** Photographer-written caption, often more specific than `alt`. */
+  description?: string;
   credit: PhotoCredit;
 }
 
@@ -35,6 +37,7 @@ interface UnsplashSearchResponse {
   results?: {
     id?: string;
     alt_description?: string | null;
+    description?: string | null;
     urls?: { regular?: string };
     links?: { download_location?: string };
     user?: { name?: string; links?: { html?: string } };
@@ -152,6 +155,7 @@ export async function searchUnsplashPhoto(
   return {
     src: photo.urls.regular,
     alt: photo.alt_description ?? undefined,
+    description: photo.description ?? undefined,
     credit: {
       name: photo.user?.name ?? 'an Unsplash photographer',
       profileUrl: photo.user?.links?.html ?? 'https://unsplash.com',

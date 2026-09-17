@@ -26,7 +26,7 @@ export const HOW_TO_REPLIES: HowToReply[] = [
   },
   {
     id: "howto-3",
-    text: "your board fills in with photos, notes, and a colour palette to match. click any photo to flip it and see where it's from. keep what you like, swap out what you don't.",
+    text: "your board fills in with photos, notes, and a colour palette to match. drag scraps around, keep what you like, tear off what you don't.",
   },
   {
     id: "howto-4",

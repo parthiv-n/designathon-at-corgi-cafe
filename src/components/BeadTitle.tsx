@@ -5,6 +5,13 @@ import { useBoardDrag } from "@/hooks/useBoardDrag";
 import { useResize } from "@/hooks/useResize";
 import { beadLabel } from "@/lib/destination";
 
+/** How wide a bead wants to be, and how far it will shrink to fit the paper. */
+const IDEAL_BEAD_PX = 44;
+const MIN_BEAD_PX = 20;
+
+/** Roughly half the paper. Past this a title stops reading as a title. */
+const MAX_TITLE_WIDTH = 460;
+
 export function BeadTitle({
   prompt,
   locked = false,
@@ -16,11 +23,20 @@ export function BeadTitle({
   const letters = word.split("");
   const beadCount = letters.filter((character) => /[A-Z]/.test(character)).length;
   const drag = useBoardDrag({ x: 5, y: 9 }, "scrapbook-board", "chrome");
-  const size = useResize(Math.max(160, beadCount * 50), 120, 640);
+  // A long name shrinks its beads rather than running off the paper, so
+  // "RIO DE JANEIRO" reads as a title instead of being cut down to "RIO DE".
+  const size = useResize(
+    Math.min(MAX_TITLE_WIDTH, Math.max(160, beadCount * IDEAL_BEAD_PX)),
+    120,
+    MAX_TITLE_WIDTH,
+  );
 
   if (!word) return null;
 
-  const beadPx = Math.max(30, Math.round(size.width / Math.max(beadCount, 1)));
+  const beadPx = Math.max(
+    MIN_BEAD_PX,
+    Math.round(size.width / Math.max(beadCount, 1)),
+  );
 
   return (
     <div
